@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Data and logs
+/data/
+/logs/
+*.log
+
+# Authentication
+token.json
+credentials.json
+client_secret*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build
+/dist/
+/build/ 
