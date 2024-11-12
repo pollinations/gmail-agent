@@ -664,22 +664,22 @@ class EmailService {
         .replace(/\//g, "_")
         .replace(/=+$/, "");
 
-      /*await this.gmail.users.messages.send({
+      await this.gmail.users.messages.send({
         userId: "me",
         requestBody: {
           raw: encodedMessage,
           threadId: email.data.threadId,
         },
-      });*/
+      });
 
       // Mark original email as read
-      /*await this.gmail.users.messages.modify({
+      await this.gmail.users.messages.modify({
         userId: "me",
         id: emailId,
         requestBody: {
           removeLabelIds: ["UNREAD"],
         },
-      });*/
+      });
 
       logger.info(`Successfully sent response to email ${emailId}`);
       return true;
