@@ -536,30 +536,25 @@ class EmailService {
       const extractText = (part) => {
         let text = "";
 
-        // If part has body data and is text, decode it
         if (
           part.mimeType &&
           part.mimeType.startsWith("text/") &&
           part.body?.data
         ) {
           const decodedText = Buffer.from(part.body.data, "base64").toString();
-          // Clean HTML if it's HTML content
           text +=
             part.mimeType === "text/html"
               ? this.cleanHtml(decodedText)
               : decodedText;
         }
 
-        // Recursively process all parts and their sub-parts
         if (part.parts) {
           for (const subPart of part.parts) {
             text += extractText(subPart);
           }
         }
 
-        // Handle nested message parts (for email threads)
         if (part.mimeType === "message/rfc822" && part.body.attachmentId) {
-          // Handle attached messages in the thread
           const attachedMessage = part.parts?.[0];
           if (attachedMessage) {
             text += extractText(attachedMessage);
@@ -581,6 +576,8 @@ class EmailService {
         subject,
         from,
         body,
+        internalDate: emailData.internalDate,
+        headers: emailData.payload.headers,
       };
     } catch (error) {
       logger.error("Failed to parse email", { error: error.message });
@@ -713,6 +710,33 @@ class EmailService {
   getEmailSignature(email) {
     const tokens = encode(`${email.subject} ${email.from}`);
     return tokens.slice(0, 100).join(","); // Create a simple signature from first 100 tokens
+  }
+
+  async fetchEmailsSince(sinceTime) {
+    try {
+      logger.info(`Fetching emails since ${sinceTime}`);
+
+      // Use existing fetchUnreadEmails to get all unread emails
+      const allEmails = await this.fetchUnreadEmails();
+
+      // Filter emails based on internal date from Gmail API
+      const filteredEmails = allEmails.filter((email) => {
+        // Gmail API provides internalDate in milliseconds since epoch
+        const emailDate = new Date(parseInt(email.internalDate));
+        const isAfter = emailDate > sinceTime;
+
+        return isAfter;
+      });
+
+      logger.info(`Found ${filteredEmails.length} emails since ${sinceTime}`);
+      return filteredEmails;
+    } catch (error) {
+      logger.error("Failed to fetch emails since last summary", {
+        error: error.message,
+        sinceTime: sinceTime.toISOString(),
+      });
+      throw error;
+    }
   }
 }
 

@@ -19,6 +19,9 @@ const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
   },
+  summary: {
+    maxEmailsInSummary: 500,
+  },
 };
 
 // Validate required configuration

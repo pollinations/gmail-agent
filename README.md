@@ -4,14 +4,64 @@ An intelligent email management system that automates email processing using AI.
 
 ## Features 🌟
 
+### Top features
+
 - **AI-Powered Analysis**: Uses GPT models to understand email context and intent
 - **Smart Response Generation**: Creates contextually appropriate responses
+- **Smart Email Summarization**: Generates action-driven email summaries
 - **Bulk Email Management**: Groups and handles similar emails efficiently
 - **Vector Similarity**: Uses embeddings to find truly similar emails
 - **Telegram Control**: Full email management through Telegram interface
 - **Multi-language Support**: Handles emails in any language
 - **Smart Threading**: Understands email conversation context
 - **Customizable Actions**: Archive, respond, or request more information
+
+### Email Summaries
+
+The bot provides comprehensive email summaries to help you stay on top of your inbox:
+
+#### Scheduled Summaries
+
+- 🌅 **Morning Overview (9 AM)**
+  - Covers emails from 5 PM previous day to 9 AM
+  - Perfect for catching up on overnight communications
+- 🌞 **Midday Catch-up (2 PM)**
+  - Covers emails from 9 AM to 2 PM
+  - Stay updated on morning developments
+- 🌙 **Evening Wrap-up (7 PM)**
+  - Covers emails from 2 PM to 7 PM
+  - Review afternoon communications and plan for tomorrow
+
+#### On-Demand Summary
+
+- 📋 **Quick Summary**
+  - Covers the last 3 hours of emails
+  - Useful for immediate status checks
+
+Each summary includes:
+
+- Brief overview of important communications
+- Top 5 priority emails ranked by urgency
+- Key insights and action items
+
+Summaries automatically exclude:
+
+- Automated notifications/alerts
+- Newsletters/marketing emails
+- System-generated messages
+- Calendar invites/updates
+- Subscription confirmations
+- Receipts/invoices
+- Social media notifications
+- Promotional offers
+
+## Commands
+
+- `/summary`: Request an email summary
+  - Choose from morning, midday, evening, or quick summary types
+  - Each type covers a specific time range
+  - Summaries are focused on actionable items only
+- `/help`: Display available commands and information
 
 ## Prerequisites 📋
 
@@ -86,6 +136,20 @@ The wizard will provide step-by-step instructions for:
 The wizard will automatically save all configurations to the `.env` file.
 
 ## Usage Guide 💡
+
+### Overview
+
+1. Start a chat with your Telegram bot
+2. Use the `/help` command to see available options
+3. Use the `/summary` command to request an email summary
+   - Select the desired time range based on your needs
+   - Morning: overnight emails since 5 PM yesterday
+   - Midday: morning emails since 9 AM
+   - Evening: afternoon emails since 2 PM
+   - Quick: last 3 hours of emails
+4. Interact with the bot to manage your emails efficiently
+
+The bot will automatically process incoming emails and send you notifications for important messages. You can then choose to respond, archive, or take other actions directly through the Telegram interface.
 
 ### Telegram Commands
 

@@ -3,6 +3,8 @@ const config = require("../config/config");
 const logger = require("../utils/logger");
 const emailService = require("./emailService");
 const aiService = require("./aiService");
+const summaryService = require("./summaryService");
+const cron = require("node-cron");
 
 class TelegramService {
   constructor() {
@@ -14,13 +16,171 @@ class TelegramService {
   async initialize() {
     try {
       this.bot = new TelegramBot(config.telegram.botToken, { polling: true });
+
+      // Register command handlers
+      this.bot.onText(/\/summary/, this.handleSummaryCommand.bind(this));
+      this.bot.onText(/\/help/, this.handleHelpCommand.bind(this));
+
+      // Register callback query handler
+      this.bot.on("callback_query", this.handleCallbackQuery.bind(this));
+
+      // Register general message handler
       this.bot.on("message", this.handleIncomingMessage.bind(this));
-      logger.info("Telegram bot initialized");
+
+      // Schedule summaries at 9 AM, 2 PM, and 7 PM
+      cron.schedule("0 9,14,19 * * *", () => {
+        this.sendScheduledSummary();
+      });
+
+      logger.info("Telegram bot initialized with scheduled summaries");
     } catch (error) {
       logger.error("Failed to initialize Telegram bot", {
         error: error.message,
       });
       throw error;
+    }
+  }
+
+  async handleSummaryCommand(msg) {
+    try {
+      // Verify user authorization
+      if (msg.from.id.toString() !== config.telegram.userId) {
+        logger.warn(`Unauthorized summary request from user ${msg.from.id}`);
+        return;
+      }
+
+      await this.bot.sendMessage(msg.chat.id, "📊 Choose summary type:", {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "🌅 Morning Overview", callback_data: "summary_morning" },
+              {
+                text: "🌞 Midday Catch-up",
+                callback_data: "summary_afternoon",
+              },
+            ],
+            [
+              { text: "🌙 Evening Wrap-up", callback_data: "summary_evening" },
+              { text: "📋 Quick Summary", callback_data: "summary_regular" },
+            ],
+          ],
+        },
+      });
+    } catch (error) {
+      logger.error("Error handling summary command", { error: error.message });
+      await this.sendErrorMessage(msg.chat.id);
+    }
+  }
+
+  async handleHelpCommand(msg) {
+    try {
+      // Escape special characters for MarkdownV2 format
+      const helpMessage = `
+📧 *Gmail Agent Help*
+
+Commands:
+/summary \- Request an email summary
+/help \- Show this help message
+
+*Summary Types:*
+• Morning Overview \(9 AM\)
+• Midday Catch\-up \(2 PM\)
+• Evening Wrap\-up \(7 PM\)
+
+*Each Summary Includes:*
+• Overview of important emails
+• Top 5 priority items
+• Key insights
+
+*Note:* Summaries automatically run at scheduled times\. Use /summary for an immediate report\.`;
+
+      await this.bot.sendMessage(msg.chat.id, helpMessage, {
+        parse_mode: "MarkdownV2",
+        disable_web_page_preview: true,
+      });
+    } catch (error) {
+      logger.error("Error sending help message", {
+        error: error.message,
+        userId: msg.from.id,
+      });
+      // Send a plain text fallback message if markdown fails
+      try {
+        const fallbackMessage = `
+📧 Gmail Agent Help
+
+Commands:
+/summary - Request an email summary
+/help - Show this help message
+
+Summary Types:
+• Morning Overview (9 AM)
+• Midday Catch-up (2 PM)
+• Evening Wrap-up (7 PM)
+
+Each Summary Includes:
+• Overview of important emails
+• Top 5 priority items
+• Key insights
+
+Note: Summaries automatically run at scheduled times. Use /summary for an immediate report.`;
+
+        await this.bot.sendMessage(msg.chat.id, fallbackMessage);
+      } catch (fallbackError) {
+        logger.error("Error sending fallback help message", {
+          error: fallbackError.message,
+          userId: msg.from.id,
+        });
+        await this.sendErrorMessage(msg.chat.id);
+      }
+    }
+  }
+
+  // Add callback query handler for summary buttons
+  async handleCallbackQuery(callbackQuery) {
+    try {
+      const userId = callbackQuery.from.id.toString();
+      if (userId !== config.telegram.userId) {
+        logger.warn(`Unauthorized callback query from user ${userId}`);
+        return;
+      }
+
+      const action = callbackQuery.data;
+      if (action.startsWith("summary_")) {
+        const summaryType = action.split("_")[1];
+        await this.bot.sendMessage(
+          callbackQuery.message.chat.id,
+          `Generating ${summaryType} summary...`
+        );
+
+        // Override the summary type temporarily
+        const originalGetSummaryType = summaryService.getSummaryType;
+        summaryService.getSummaryType = () => summaryType;
+
+        // Generate and send the summary
+        const summary = await summaryService.generateHourlySummary();
+
+        // Restore the original method
+        summaryService.getSummaryType = originalGetSummaryType;
+
+        if (summary.startsWith("Error generating summary:")) {
+          logger.error("Summary generation failed", { summary });
+          await this.bot.sendMessage(
+            callbackQuery.message.chat.id,
+            "An error occurred while generating the summary. Please try again later or contact support."
+          );
+        } else {
+          await this.bot.sendMessage(callbackQuery.message.chat.id, summary);
+        }
+      }
+
+      // Answer the callback query to remove the loading state
+      await this.bot.answerCallbackQuery(callbackQuery.id);
+    } catch (error) {
+      logger.error("Error handling callback query", {
+        error: error.message,
+        stack: error.stack,
+      });
+      await this.sendErrorMessage(callbackQuery.message.chat.id);
     }
   }
 
@@ -622,6 +782,20 @@ Please provide your answer:`;
       questionIndex,
       totalQuestions: questions,
     });
+  }
+
+  async sendScheduledSummary() {
+    try {
+      const currentTime = new Date();
+      logger.info(
+        `Scheduled summary triggered at ${currentTime.toLocaleTimeString()}`
+      );
+      const summary = await summaryService.generateHourlySummary();
+      await this.bot.sendMessage(config.telegram.userId, summary);
+      logger.info("Scheduled summary sent successfully");
+    } catch (error) {
+      logger.error("Error sending scheduled summary", { error: error.message });
+    }
   }
 }
 
