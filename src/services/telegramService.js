@@ -309,6 +309,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
         case "1":
           await this.executeConfirmedAction(msg.from.id, confirmationData);
           break;
+
         case "2":
           await this.bot.sendMessage(
             msg.from.id,
@@ -316,6 +317,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
           );
           this.pendingConfirmations.delete(msg.from.id);
           break;
+
         case "3":
           if (action === "RESPOND") {
             await this.initiateEditing(msg.from.id, confirmationData);
@@ -323,18 +325,23 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
             await this.handleForceReply(msg.from.id, confirmationData);
           }
           break;
+
         case "4":
           if (action === "RESPOND") {
             await this.handleForceArchive(msg.from.id, emailId);
           }
           break;
+
         default:
           logger.warn(`Unexpected response: ${msg.text}`);
           await this.sendErrorMessage(msg.from.id);
       }
     } catch (error) {
-      console.info(error);
-      logger.error("Error handling action response", { error: error.message });
+      logger.error("Error handling action response", {
+        error: error.message,
+        userId: msg.from.id,
+        action: confirmationData?.action,
+      });
       await this.sendErrorMessage(msg.from.id);
     }
   }
@@ -428,6 +435,9 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
   escapeSpecialChars(text) {
     if (!text) return "";
     return text
+      .replace(/\\/g, "\\\\")
+      .replace(/\./g, "\\.")
+      .replace(/\!/g, "\\!")
       .replace(/\_/g, "\\_")
       .replace(/\*/g, "\\*")
       .replace(/\[/g, "\\[")
@@ -444,8 +454,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
       .replace(/\|/g, "\\|")
       .replace(/\{/g, "\\{")
       .replace(/\}/g, "\\}")
-      .replace(/\./g, "\\.")
-      .replace(/\!/g, "\\!");
+      .replace(/\&/g, "\\&");
   }
 
   async sendEditHistory(userId, editHistory) {
@@ -463,9 +472,10 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
   }
 
   async sendFinalConfirmationWithHistory(userId, confirmationData) {
-    const { draftResponse, editHistory } = confirmationData;
+    try {
+      const { draftResponse, editHistory } = confirmationData;
 
-    let message = `
+      let message = `
 📧 *Confirm Final Response*
 
 *Current Response:*
@@ -486,14 +496,21 @@ Reply with:
 2️⃣ to Cancel
 3️⃣ to Edit Again`;
 
-    await this.bot.sendMessage(userId, message, {
-      parse_mode: "Markdown",
-      reply_markup: {
-        keyboard: [["1", "2", "3"]],
-        one_time_keyboard: true,
-        resize_keyboard: true,
-      },
-    });
+      await this.bot.sendMessage(userId, message, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          keyboard: [["1", "2", "3"]],
+          one_time_keyboard: true,
+          resize_keyboard: true,
+        },
+      });
+    } catch (error) {
+      logger.error("Error sending final confirmation", {
+        error: error.message,
+        userId,
+      });
+      await this.sendErrorMessage(userId);
+    }
   }
 
   async sendConfirmation(userId, emailData, analysis) {
@@ -795,6 +812,87 @@ Please provide your answer:`;
       logger.info("Scheduled summary sent successfully");
     } catch (error) {
       logger.error("Error sending scheduled summary", { error: error.message });
+    }
+  }
+
+  async initiateEditing(userId, confirmationData) {
+    try {
+      // Create a simpler message with properly escaped characters
+      const escapedResponse = this.escapeSpecialChars(
+        confirmationData.draftResponse || ""
+      );
+
+      const message = [
+        "📝 *Current Response:*",
+        "",
+        escapedResponse,
+        "",
+        "Please send your edited version\\.",
+      ].join("\n");
+
+      await this.bot.sendMessage(userId, message, {
+        parse_mode: "MarkdownV2",
+        reply_markup: {
+          force_reply: true,
+          remove_keyboard: true,
+        },
+      });
+
+      this.editingResponses.set(userId, true);
+    } catch (error) {
+      logger.error("Error initiating editing", {
+        error: error.message,
+        userId,
+        responseLength: confirmationData?.draftResponse?.length,
+      });
+
+      // Send a plain text fallback if markdown fails
+      try {
+        await this.bot.sendMessage(
+          userId,
+          "📝 Current Response:\n\n" +
+            (confirmationData.draftResponse || "") +
+            "\n\nPlease send your edited version.",
+          {
+            reply_markup: {
+              force_reply: true,
+              remove_keyboard: true,
+            },
+          }
+        );
+        this.editingResponses.set(userId, true);
+      } catch (fallbackError) {
+        logger.error("Error sending fallback edit message", {
+          error: fallbackError.message,
+        });
+        await this.sendErrorMessage(userId);
+        this.editingResponses.delete(userId);
+      }
+    }
+  }
+
+  async handleForceReply(userId, confirmationData) {
+    try {
+      const forcedResponse = await aiService.generateForcedResponse(
+        confirmationData.originalEmail
+      );
+      confirmationData.action = "RESPOND";
+      confirmationData.draftResponse = forcedResponse;
+      await this.sendFinalConfirmationWithHistory(userId, confirmationData);
+    } catch (error) {
+      logger.error("Error handling force reply", { error: error.message });
+      await this.sendErrorMessage(userId);
+    }
+  }
+
+  async handleForceArchive(userId, emailId) {
+    try {
+      await emailService.archiveEmail(emailId);
+      await this.bot.sendMessage(userId, "✅ Email archived successfully!");
+      this.pendingConfirmations.delete(userId);
+    } catch (error) {
+      logger.error("Error handling force archive", { error: error.message });
+      await this.sendErrorMessage(userId);
     }
   }
 }
