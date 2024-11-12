@@ -2,6 +2,15 @@
 
 An intelligent email management system that automates email processing using AI. The system analyzes emails, suggests actions, and allows control through Telegram.
 
+# Demo 
+
+https://github.com/user-attachments/assets/a0b01e5f-2835-49d7-971d-f4c18abda5ee
+
+https://github.com/user-attachments/assets/2466c90a-c5fe-40fe-80c2-e5477a41ac5b
+
+https://github.com/user-attachments/assets/a5fb1641-c8da-4a26-93c8-9d14a74cbb6f
+
+
 ## Features 🌟
 
 ### Top features
