@@ -10,7 +10,7 @@ class SummaryService {
     this.model = new ChatOpenAI({
       openAIApiKey: config.openai.apiKey,
       temperature: 0.7,
-      modelName: "gpt-4-turbo-preview",
+      modelName: "gpt-4o-mini",
     });
   }
 

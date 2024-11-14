@@ -4,7 +4,9 @@ const config = require("../config/config");
 const userService = require("./userService");
 const logger = require("../utils/logger");
 const contextService = require("./contextService");
-
+const fs = require("fs");
+const path = require("path");
+const currentDate = new Date().toISOString().split('T')[0];
 class AIService {
   constructor() {
     this.model = new ChatOpenAI({
@@ -12,6 +14,31 @@ class AIService {
       temperature: 0.7,
       modelName: "gpt-4o-mini",
     });
+    this.contextCache = null;
+  }
+
+  loadContextFiles() {
+    try {
+      if (this.contextCache) {
+        return this.contextCache;
+      }
+
+      const contextDir = path.join(process.cwd(), "context");
+      const files = fs.readdirSync(contextDir).filter(file => file.endsWith('.md'));
+      
+      const combinedContext = files.map(file => {
+        const content = fs.readFileSync(path.join(contextDir, file), 'utf8');
+        return `# ${file}\n\n${content}\n\n---\n\n`;
+      }).join('');
+
+      // console.log("context", combinedContext);
+
+      this.contextCache = combinedContext;
+      return combinedContext;
+    } catch (error) {
+      logger.error("Failed to load context files", { error: error.message });
+      return "";
+    }
   }
 
   async summarizeThread(email) {
@@ -47,9 +74,8 @@ Keep the summary focused and prioritize the most recent communication while prov
   async analyzeEmail(email, isFollowUp = false) {
     try {
       const userData = await userService.getUserData();
-      // console.log("Got user data", userData);
-      console.log(`Got user data`, { userData });
       const relevantContext = await contextService.getRelevantContext(email);
+      const combinedContext = this.loadContextFiles();
 
       // Only check for additional info if this is not a follow-up
       if (!isFollowUp) {
@@ -73,12 +99,15 @@ Keep the summary focused and prioritize the most recent communication while prov
       const prompt = new PromptTemplate({
         template: `You are an intelligent email assistant for {firstName} {lastName}. 
 
-Available Context:
-{context}
+Available Historical Context:
+{combinedContext}
+
+Current Date: {currentDate}
 
 First, analyze this email:
 Subject: {subject}
 From: {from}
+Date: {emailDate}
 Email Content: {body}
 
 Classification Guidelines:
@@ -106,12 +135,16 @@ Task:
 1. Use the available context to inform your decision
 2. Apply the classification guidelines strictly
 3. If response is needed, use context to make it more relevant
+4. Format the response with proper paragraphs:
+   - Use double line breaks between paragraphs
+   - Each paragraph should be a complete thought
+   - Ensure greeting and signature are separated by double line breaks
 
 Provide your analysis using EXACTLY this format:
 
 Action: ARCHIVE or RESPOND
 Reason: [Clear explanation in English why this should be archived or requires response]
-Draft Response: [If action is RESPOND, write a well-structured response with clear paragraph breaks. Use line breaks between paragraphs for readability. Include an appropriate greeting and closing.]
+Draft Response: [If action is RESPOND, write a well-structured response with triple line breaks between paragraphs (\n\n\n). Ensure proper spacing between greeting, body paragraphs, and closing.]
 
 Important:
 - Be very conservative about suggesting responses
@@ -124,33 +157,39 @@ Double-check your classification before responding.`,
           "firstName",
           "lastName",
           "context",
+          "combinedContext",
           "subject",
           "from",
+          "emailDate",
           "body",
           "signatureInstruction",
+          "currentDate",
         ],
       });
+
+    
 
       const formattedPrompt = await prompt.format({
         firstName: userData.firstName,
         lastName: userData.lastName || "",
         context: JSON.stringify(relevantContext, null, 2),
+        combinedContext: combinedContext,
         subject: email.subject,
         from: email.from,
+        emailDate: new Date(parseInt(email.internalDate)).toLocaleString(),
         body: email.body,
         signatureInstruction: userData.preferences.useSignature
           ? `- Include this signature in responses:\n${userData.signature}`
-          : "",
+          : "- DO NOT add any signature",
+        currentDate: currentDate,
       });
+
+      console.log("formattedPrompt", formattedPrompt);
 
       const response = await this.model.invoke(formattedPrompt);
       return this.parseAIResponse(response.content);
     } catch (error) {
-      logger.error(`Error analyzing email`, {
-        error: error.message,
-        emailId: email.id,
-      });
-      console.error(error);
+      logger.error("Error analyzing email", { error: error.message });
       throw error;
     }
   }
@@ -346,7 +385,7 @@ ALIASES: [alias1], [alias2], [alias3]`,
 
       return result;
     } catch (error) {
-      console.info(error);
+      console.error(error);
       logger.error("Error processing user response", {
         error: error.message,
         question,
@@ -357,54 +396,51 @@ ALIASES: [alias1], [alias2], [alias3]`,
   }
 
   async generateForcedResponse(email) {
-    // First, detect the language
-    const languagePrompt = PromptTemplate.fromTemplate(
-      `Analyze the language of this email:
-
-Subject: {subject}
-From: {from}
-Content: {body}
-
-Return ONLY the language code (e.g., "en" for English, "fr" for French, etc.).`
-    );
-
-    const languageResponse = await this.model.invoke(
-      await languagePrompt.format({
-        subject: email.subject,
-        from: email.from,
-        body: email.body,
-      })
-    );
-
-    const detectedLanguage = languageResponse.content.trim().toLowerCase();
+    const userData = await userService.getUserData();
+    const relevantContext = await contextService.getRelevantContext(email);
+    const combinedContext = this.loadContextFiles();
 
     const prompt = PromptTemplate.fromTemplate(
-      `Generate a professional response to this email. The original email is in ${detectedLanguage} language.
+      `You are an intelligent email assistant for {firstName} {lastName}. 
 
+Available Historical Context:
+{combinedContext}
+
+Current Date: {currentDate}
+
+Analyze this email:
 Subject: {subject}
 From: {from}
-Content: {body}
+Date: {emailDate}
+Email Content: {body}
 
-Guidelines for response:
-1. MUST write the response in the SAME LANGUAGE as the original email (${detectedLanguage})
-2. Be professional and courteous
-3. Address all points in the email
-4. Maintain appropriate tone and formality
-5. Keep the response clear and concise
-6. Match the style and formality level of the original email
+Task:
+1. Use the available context to inform your response
+2. Format the response with proper paragraphs:
+   - Use double line breaks between paragraphs
+   - Each paragraph should be a complete thought
+   - Ensure greeting and signature are separated by double line breaks
 
 Important:
-- Your response MUST be in ${detectedLanguage}
-- Match the tone and formality of the original email
-- Use appropriate business etiquette for ${detectedLanguage}
+- Use \n\n between paragraphs for proper email formatting
+{signatureInstruction}
 
-Generate only the response text without any additional commentary.`
+Write a well-structured response with double line breaks between paragraphs (\n\n). Ensure proper spacing between greeting, body paragraphs, and closing.`
     );
 
     const formattedPrompt = await prompt.format({
+      firstName: userData.firstName,
+      lastName: userData.lastName || "",
+      context: JSON.stringify(relevantContext, null, 2),
+      combinedContext: combinedContext,
       subject: email.subject,
       from: email.from,
+      emailDate: new Date(parseInt(email.internalDate)).toLocaleString(),
       body: email.body,
+      signatureInstruction: userData.preferences.useSignature
+        ? `- Include this signature in responses:\n${userData.signature}`
+        : "- DO NOT add any signature",
+      currentDate: currentDate,
     });
 
     const response = await this.model.invoke(formattedPrompt);
@@ -514,8 +550,18 @@ Provide only the refined response without any additional commentary.`
         throw new Error("Invalid AI response format");
       }
 
-      // Clean up the draft response
-      draftResponse = draftResponse.trim();
+      // Normalize paragraph breaks
+      draftResponse = draftResponse
+        // First normalize all line breaks to single \n
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        // Remove more than 2 consecutive line breaks
+        .replace(/\n{3,}/g, '\n\n')
+        // Ensure single line breaks within paragraphs are preserved
+        .replace(/([^\n])\n([^\n])/g, '$1\n$2')
+        // Ensure double line breaks between greeting, paragraphs and signature
+        .replace(/([^.\n])\n\n([A-Z])/g, '$1\n\n$2')
+        .trim();
 
       return {
         action: action.toUpperCase(),
@@ -533,6 +579,54 @@ Provide only the refined response without any additional commentary.`
         draftResponse: "I received your email and will review it shortly.",
       };
     }
+  }
+
+  // Add new method for prompt-based editing
+  async editResponseWithPrompt(email, originalResponse, editingPrompt) {
+    const combinedContext = this.loadContextFiles();
+    
+    const prompt = PromptTemplate.fromTemplate(
+      `Available Historical Context:
+{combinedContext}
+
+You are an email assistant. Edit the following email response according to the user's instructions.
+
+Original Email Context:
+Subject: {subject}
+From: {from}
+Content: {body}
+
+Current Response:
+{originalResponse}
+
+User's Editing Instructions:
+{editingPrompt}
+
+Guidelines:
+1. Apply the user's editing instructions carefully
+2. Maintain the same language as the original response
+3. Preserve the professional tone
+4. Keep the context and key information intact
+5. Ensure the response remains appropriate for business communication
+6. Format with proper spacing:
+   - Use double line breaks between paragraphs (\n\n)
+   - Separate greeting and signature with double line breaks
+   - Keep paragraphs logically grouped
+
+Return only the edited response, with proper paragraph formatting.`
+    );
+
+    const formattedPrompt = await prompt.format({
+      subject: email.subject,
+      from: email.from,
+      body: email.body,
+      originalResponse: originalResponse,
+      editingPrompt: editingPrompt,
+      combinedContext: combinedContext,
+    });
+
+    const response = await this.model.invoke(formattedPrompt);
+    return response.content.trim();
   }
 }
 

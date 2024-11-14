@@ -74,6 +74,7 @@ async function processEmail(email) {
       error: error.message,
       stack: error.stack,
     });
+    console.error(error);
   }
 }
 
@@ -121,6 +122,7 @@ async function processEmails() {
       error: error.message,
       stack: error.stack,
     });
+    console.error(error);
 
     // If initialization failed, exit the process
     if (error.message.includes("Failed to initialize")) {

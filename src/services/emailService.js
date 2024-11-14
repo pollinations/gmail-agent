@@ -2,11 +2,12 @@ const { google } = require("googleapis");
 const { authenticate } = require("@google-cloud/local-auth");
 const config = require("../config/config");
 const logger = require("../utils/logger");
+const userService = require("./userService");
 const fs = require("fs");
 const path = require("path");
 const open = require("open");
 const { OpenAIEmbeddings } = require("@langchain/openai");
-const { encode, decode } = require("gpt-3-encoder"); // Add decode import
+const { encode, decode } = require("gpt-3-encoder");
 
 class EmailService {
   constructor() {
@@ -147,17 +148,61 @@ class EmailService {
         return [];
       }
 
-      this.currentEmailBatch = await Promise.all(
+      // Get user data to check email addresses
+      const userData = await userService.getUserData();
+      const myEmails = userData.emails || [];
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      // Process each message and filter out recently replied threads
+      const processedEmails = await Promise.all(
         response.data.messages
           .filter((message) => !this.processedEmails.has(message.id))
           .map(async (message) => {
-            const email = await this.gmail.users.messages.get({
-              userId: "me",
-              id: message.id,
-            });
-            return this.parseEmail(email.data);
+            try {
+              // Get the thread instead of just the message
+              const thread = await this.gmail.users.threads.get({
+                userId: "me",
+                id: message.threadId,
+              });
+
+              // Check if the last message in the thread is from us and recent
+              const messages = thread.data.messages || [];
+              if (messages.length > 1) {
+                const lastMessage = messages[messages.length - 1];
+                const lastMessageFrom = lastMessage.payload.headers.find(
+                  h => h.name === "From"
+                )?.value || "";
+                const lastMessageDate = new Date(parseInt(lastMessage.internalDate));
+
+                // If last message is from us and within 7 days, skip this thread
+                if (
+                  myEmails.some(email => lastMessageFrom.toLowerCase().includes(email.toLowerCase())) &&
+                  lastMessageDate > sevenDaysAgo
+                ) {
+                  logger.info(`Skipping thread ${message.threadId} - recent reply from us`);
+                  return null;
+                }
+              }
+
+              // Get the unread message details
+              const email = await this.gmail.users.messages.get({
+                userId: "me",
+                id: message.id,
+              });
+              return this.parseEmail(email.data);
+            } catch (error) {
+              logger.error(`Error processing message ${message.id}`, {
+                error: error.message,
+              });
+              console.error(error);
+              return null;
+            }
           })
       );
+
+      // Filter out null results and store in currentEmailBatch
+      this.currentEmailBatch = processedEmails.filter(email => email !== null);
 
       logger.info(`Fetched ${this.currentEmailBatch.length} new unread emails from Primary category`);
       return this.currentEmailBatch;
@@ -646,6 +691,12 @@ class EmailService {
       const subject = headers.find((h) => h.name === "Subject")?.value;
       const references = headers.find((h) => h.name === "Message-ID")?.value;
 
+      // Ensure response has proper line breaks
+      const formattedResponse = response
+        .replace(/\r\n/g, '\n')  // Normalize line endings
+        .replace(/\n{3,}/g, '\n\n')  // Remove excess line breaks
+        .trim();
+
       const message = [
         "From: me",
         `To: ${to}`,
@@ -654,7 +705,7 @@ class EmailService {
         "Content-Type: text/plain; charset=utf-8",
         "MIME-Version: 1.0",
         "",
-        response,
+        formattedResponse,
       ].join("\n");
 
       console.info("send response");
@@ -842,6 +893,164 @@ class EmailService {
       });
       throw error;
     }
+  }
+
+  async createDraft(emailId, response) {
+    try {
+      const email = await this.gmail.users.messages.get({
+        userId: "me",
+        id: emailId,
+      });
+
+      const headers = email.data.payload.headers;
+      const to = headers.find((h) => h.name === "From")?.value;
+      const subject = headers.find((h) => h.name === "Subject")?.value;
+      const references = headers.find((h) => h.name === "Message-ID")?.value;
+
+      // Ensure response has proper line breaks
+      const formattedResponse = response
+        .replace(/\r\n/g, '\n')  // Normalize line endings
+        .replace(/\n{3,}/g, '\n\n')  // Remove excess line breaks
+        .trim();
+
+      const message = [
+        "From: me",
+        `To: ${to}`,
+        `Subject: Re: ${subject}`,
+        `References: ${references}`,
+        "Content-Type: text/plain; charset=utf-8",
+        "MIME-Version: 1.0",
+        "",
+        formattedResponse,
+      ].join("\n");
+
+      const encodedMessage = Buffer.from(message)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+
+      // Create draft instead of sending
+      await this.gmail.users.drafts.create({
+        userId: "me",
+        requestBody: {
+          message: {
+            raw: encodedMessage,
+            threadId: email.data.threadId,
+          },
+        },
+      });
+
+      // Mark original email as read and processed
+      await this.gmail.users.messages.modify({
+        userId: "me",
+        id: emailId,
+        requestBody: {
+          removeLabelIds: ["UNREAD"],
+        },
+      });
+
+      // Add to processed emails set and remove from current batch
+      this.processedEmails.add(emailId);
+      this.currentEmailBatch = this.currentEmailBatch.filter(
+        (email) => email.id !== emailId
+      );
+
+      logger.info(`Successfully created draft response for email ${emailId} and marked as processed`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to create draft response for email ${emailId}`, {
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  // Add new method for applying ToArchive label
+  async applyToArchiveLabel(emailId) {
+    try {
+      // First, ensure the label exists
+      await this.ensureToArchiveLabelExists();
+
+      // Apply ToArchive label and remove UNREAD label
+      await this.gmail.users.messages.modify({
+        userId: "me",
+        id: emailId,
+        requestBody: {
+          addLabelIds: ["Label_ToArchive"],
+          removeLabelIds: ["UNREAD"],
+        },
+      });
+
+      // Add to processed emails set
+      this.processedEmails.add(emailId);
+
+      // Remove from current batch if present
+      this.currentEmailBatch = this.currentEmailBatch.filter(
+        (email) => email.id !== emailId
+      );
+
+      logger.info(`Successfully applied ToArchive label to email ${emailId}`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to apply ToArchive label to email ${emailId}`, {
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  // Add method to ensure ToArchive label exists
+  async ensureToArchiveLabelExists() {
+    try {
+      // Get all labels
+      const response = await this.gmail.users.labels.list({
+        userId: "me",
+      });
+
+      // Check if ToArchive label exists
+      const toArchiveLabel = response.data.labels.find(
+        (label) => label.name === "ToArchive"
+      );
+
+      if (!toArchiveLabel) {
+        // Create the label if it doesn't exist
+        await this.gmail.users.labels.create({
+          userId: "me",
+          requestBody: {
+            name: "ToArchive",
+            labelListVisibility: "labelShow",
+            messageListVisibility: "show",
+          },
+        });
+        logger.info("Created ToArchive label");
+      }
+    } catch (error) {
+      logger.error("Error ensuring ToArchive label exists", {
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  // Update bulkArchive to use the new label
+  async bulkApplyToArchiveLabel(emailIds) {
+    const results = [];
+    for (const emailId of emailIds) {
+      try {
+        await this.applyToArchiveLabel(emailId);
+        results.push({ emailId, success: true });
+      } catch (error) {
+        results.push({ emailId, success: false, error: error.message });
+      }
+    }
+
+    // Force refresh the current batch after bulk operation
+    this.currentEmailBatch = this.currentEmailBatch.filter(
+      (email) => !emailIds.includes(email.id)
+    );
+
+    return results;
   }
 }
 

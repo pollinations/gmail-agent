@@ -150,19 +150,33 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
   }
 
   // Add callback query handler for summary buttons
-  async handleCallbackQuery(callbackQuery) {
+  async handleCallbackQuery(query) {
     try {
-      const userId = callbackQuery.from.id.toString();
+      const userId = query.from.id.toString();
+      const data = query.data;
+
+      // Add new callback handler for prompt-based editing
+      if (data === 'edit_with_prompt') {
+        const confirmationData = this.pendingConfirmations.get(userId);
+        if (!confirmationData) {
+          await this.bot.sendMessage(userId, "❌ No active email response to edit.");
+          return;
+        }
+        await this.initiatePromptEditing(userId, confirmationData);
+        return;
+      }
+
+      // Verify user authorization
       if (userId !== config.telegram.userId) {
         logger.warn(`Unauthorized callback query from user ${userId}`);
         return;
       }
 
-      const action = callbackQuery.data;
+      const action = data;
       if (action.startsWith("summary_")) {
         const summaryType = action.split("_")[1];
         await this.bot.sendMessage(
-          callbackQuery.message.chat.id,
+          query.message.chat.id,
           `Generating ${summaryType} summary...`
         );
 
@@ -179,28 +193,65 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
         if (summary.startsWith("Error generating summary:")) {
           logger.error("Summary generation failed", { summary });
           await this.bot.sendMessage(
-            callbackQuery.message.chat.id,
+            query.message.chat.id,
             "An error occurred while generating the summary. Please try again later or contact support."
           );
         } else {
-          await this.bot.sendMessage(callbackQuery.message.chat.id, summary);
+          await this.bot.sendMessage(query.message.chat.id, summary);
         }
       }
 
       // Answer the callback query to remove the loading state
-      await this.bot.answerCallbackQuery(callbackQuery.id);
+      await this.bot.answerCallbackQuery(query.id);
     } catch (error) {
       logger.error("Error handling callback query", {
         error: error.message,
         stack: error.stack,
       });
       console.error(error);
-      await this.sendErrorMessage(callbackQuery.message.chat.id);
+      await this.sendErrorMessage(query.message.chat.id);
     }
   }
 
   async handleIncomingMessage(msg) {
     try {
+      const userId = msg.from.id.toString();
+      
+      // Check if we're in editing mode
+      if (this.editingResponses.has(userId)) {
+        const editingState = this.editingResponses.get(userId);
+        const confirmationData = editingState.data;
+        
+        if (editingState.type === 'prompt') {
+          // Handle prompt-based editing
+          const editedResponse = await aiService.editResponseWithPrompt(
+            confirmationData.email,
+            confirmationData.draftResponse,
+            msg.text
+          );
+          
+          // Update the draft response
+          confirmationData.draftResponse = editedResponse;
+          
+          // Show the edited version for confirmation
+          await this.sendConfirmation(
+            userId,
+            confirmationData.email,
+            {
+              action: "RESPOND",
+              reason: confirmationData.reason,
+              draftResponse: editedResponse,
+            }
+          );
+        } else {
+          // Handle full text editing (existing code)
+          // ... existing editing logic ...
+        }
+        
+        this.editingResponses.delete(userId);
+        return;
+      }
+
       // Only process messages from authorized user
       if (msg.from.id.toString() !== config.telegram.userId) {
         logger.warn(`Unauthorized message from user ${msg.from.id}`);
@@ -392,8 +443,8 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
             await this.sendErrorMessage(userId);
             break;
           }
-          await emailService.sendResponse(emailId, draftResponse);
-          await this.bot.sendMessage(userId, "✅ Response sent successfully!");
+          await emailService.createDraft(emailId, draftResponse);
+          await this.bot.sendMessage(userId, "✅ Response saved as draft!");
           
           // Ensure email is marked as processed
           emailService.markAsProcessed(emailId);
@@ -401,7 +452,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
 
         case "ARCHIVE":
           try {
-            // Check for similar emails before archiving
+            // Check for similar emails before applying label
             const similarEmails = await emailService.findSimilarEmails(
               originalEmail
             );
@@ -416,16 +467,17 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
               return; // Don't clear confirmation yet
             }
 
-            await emailService.archiveEmail(emailId);
+            await emailService.applyToArchiveLabel(emailId);
             await this.bot.sendMessage(
               userId,
-              "✅ Email archived successfully!"
+              "✅ Email marked for archiving!"
             );
           } catch (archiveError) {
             logger.error("Error in archive operation", {
               error: archiveError.message,
               emailId,
             });
+            console.error(archiveError);
             await this.sendErrorMessage(userId);
           }
           break;
@@ -539,6 +591,7 @@ Reply with:
         error: error.message,
         userId,
       });
+      console.error(error);
       await this.sendErrorMessage(userId);
     }
   }
@@ -709,29 +762,29 @@ ${analysis.action === "RESPOND"
 
       switch (choice) {
         case "1":
-          // Archive all emails
+          // Apply ToArchive label to all emails
           const allEmailIds = [
             originalEmailId,
             ...similarEmails.map((email) => email.id),
           ];
 
-          logger.info(`Bulk archiving ${allEmailIds.length} emails`);
-          const results = await emailService.bulkArchive(allEmailIds);
+          logger.info(`Bulk marking ${allEmailIds.length} emails for archiving`);
+          const results = await emailService.bulkApplyToArchiveLabel(allEmailIds);
 
           const successCount = results.filter((r) => r.success).length;
           await this.bot.sendMessage(
             userId,
-            `✅ Successfully archived ${successCount} emails!`
+            `✅ Successfully marked ${successCount} emails for archiving!`
           );
           break;
 
         case "2":
-          // Archive only original email
-          logger.info(`Archiving only original email ${originalEmailId}`);
-          await emailService.archiveEmail(originalEmailId);
+          // Apply ToArchive label to only original email
+          logger.info(`Marking only original email ${originalEmailId} for archiving`);
+          await emailService.applyToArchiveLabel(originalEmailId);
           await this.bot.sendMessage(
             userId,
-            "✅ Original email archived successfully!"
+            "✅ Original email marked for archiving!"
           );
           break;
 
@@ -749,6 +802,7 @@ ${analysis.action === "RESPOND"
       this.pendingConfirmations.delete(userId);
     } catch (error) {
       logger.error(`Error in bulk archive operation`, { error: error.message });
+      console.error(error);
       await this.sendErrorMessage(userId);
       this.pendingConfirmations.delete(userId);
     }
@@ -872,6 +926,7 @@ Please provide your answer:`;
         userId,
         responseLength: confirmationData?.draftResponse?.length,
       });
+      console.error(error);
 
       // Send a plain text fallback if markdown fails
       try {
@@ -1067,6 +1122,7 @@ Please provide your answer:`;
       this.pendingConfirmations.delete(userId);
     } catch (error) {
       logger.error(`Error in bulk mark as read operation`, { error: error.message });
+      console.error(error);
       await this.sendErrorMessage(userId);
       this.pendingConfirmations.delete(userId);
     }
@@ -1144,6 +1200,26 @@ Please provide your answer:`;
     } catch (error) {
       logger.error("Error handling stop command", { error: error.message });
       await this.sendErrorMessage(msg.chat.id);
+    }
+  }
+
+  async initiatePromptEditing(userId, confirmationData) {
+    try {
+      await this.bot.sendMessage(
+        userId,
+        "✨ Please provide your editing instructions.\n\nFor example:\n- Make it more formal\n- Add a thank you at the end\n- Remove the first paragraph\n- Make it shorter",
+        {
+          reply_markup: {
+            force_reply: true,
+            remove_keyboard: true,
+          },
+        }
+      );
+      this.editingResponses.set(userId, { type: 'prompt', data: confirmationData });
+    } catch (error) {
+      logger.error("Error initiating prompt editing", { error: error.message });
+      console.error(error);
+      await this.sendErrorMessage(userId);
     }
   }
 }
