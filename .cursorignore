@@ -1,0 +1,67 @@
+# Build and output directories
+/dist/
+/build/
+/out/
+
+# Data and logs
+/data/
+/logs/
+/exports/
+*.log
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment and credentials
+.env
+.env.*
+credentials.json
+token.json
+client_secret*.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Documentation and markdown
+*.md
+LICENSE
+!README.md
+
+# Test files
+/test/
+/tests/
+*.test.js
+*.spec.js
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Debug files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Version control
+.git/
+.gitignore
+
+# Configuration files that don't contain logic
+tsconfig.json
+.prettierrc
+.eslintrc
+.babelrc
+
+# Backup files
+*.bak
+*~
