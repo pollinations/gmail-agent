@@ -62,6 +62,10 @@ const config = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
+    models: {
+      analyze: "gpt-4o-mini",
+      compose: "gpt-4"
+    }
   },
   summary: {
     maxEmailsInSummary: 1000,

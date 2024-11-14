@@ -700,6 +700,7 @@ class EmailService {
       const message = [
         "From: me",
         `To: ${to}`,
+        "Cc: hello@pollinations.ai", // Add CC to pollinations
         `Subject: Re: ${subject}`,
         `References: ${references}`,
         "Content-Type: text/plain; charset=utf-8",
@@ -916,6 +917,7 @@ class EmailService {
       const message = [
         "From: me",
         `To: ${to}`,
+        "Cc: hello@pollinations.ai", // Add CC to pollinations
         `Subject: Re: ${subject}`,
         `References: ${references}`,
         "Content-Type: text/plain; charset=utf-8",
@@ -962,6 +964,7 @@ class EmailService {
       logger.error(`Failed to create draft response for email ${emailId}`, {
         error: error.message,
       });
+      console.error(error);
       throw error;
     }
   }

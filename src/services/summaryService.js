@@ -1,17 +1,49 @@
-const { ChatOpenAI } = require("@langchain/openai");
-const { PromptTemplate } = require("@langchain/core/prompts");
 const config = require("../config/config");
 const emailService = require("./emailService");
 const logger = require("../utils/logger");
-const { encode } = require("gpt-3-encoder");
 
 class SummaryService {
   constructor() {
-    this.model = new ChatOpenAI({
-      openAIApiKey: config.openai.apiKey,
-      temperature: 0.7,
-      modelName: "gpt-4o-mini",
-    });
+    this.apiEndpoint = "https://text.pollinations.ai/openai";
+  }
+
+  async callPollinationsAPI(messages, model = "openai") {
+    try {
+      const response = await fetch(this.apiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages,
+          model,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API call failed: ${response.statusText}`);
+      }
+
+      // Add error handling for text response
+      const text = await response.text();
+      
+      try {
+        // Try to parse as JSON first
+        const data = JSON.parse(text);
+        return data.choices?.[0]?.message?.content?.trim() || text;
+      } catch (e) {
+        // If not JSON, return the raw text
+        return text.trim();
+      }
+
+    } catch (error) {
+      logger.error("Error calling Pollinations API", { 
+        error: error.message,
+        endpoint: this.apiEndpoint 
+      });
+      throw error;
+    }
   }
 
   async generateHourlySummary(type = "normal") {
@@ -75,7 +107,6 @@ class SummaryService {
   }
 
   async generateSummaryForEmails(emails) {
-    // Prepare the email data for the prompt
     const emailData = emails.map(email => ({
       subject: email.subject || 'No Subject',
       from: email.from || 'Unknown Sender',
@@ -83,40 +114,23 @@ class SummaryService {
       priority: this.calculatePriority(email)
     }));
 
-    const prompt = PromptTemplate.fromTemplate(`
-Summarize these emails concisely and highlight important items:
-
-Emails:
-{emails}
-
-Provide a summary that:
-1. Highlights urgent or important emails first
-2. Groups similar topics together
-3. Lists any required actions
-4. Identifies key trends or patterns
-
-Format:
+    const systemMessage = `Summarize these emails concisely and highlight important items.
+Format the summary with these sections:
 🚨 URGENT/IMPORTANT:
-[List urgent items]
-
 📥 KEY UPDATES:
-[Group by topic/sender]
-
 ⚡️ ACTIONS NEEDED:
-[List required actions]
-
-📊 INSIGHTS:
-[Any patterns or trends]`);
+📊 INSIGHTS:`;
 
     const formattedEmails = emailData
       .map(email => `From: ${email.from}\nSubject: ${email.subject}\nPriority: ${email.priority}`)
       .join('\n\n');
 
-    const response = await this.model.invoke(
-      await prompt.format({ emails: formattedEmails })
-    );
+    const messages = [
+      { role: "system", content: systemMessage },
+      { role: "user", content: formattedEmails }
+    ];
 
-    return response.content;
+    return this.callPollinationsAPI(messages);
   }
 
   calculatePriority(email) {
