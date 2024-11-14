@@ -19,11 +19,7 @@ class SummaryService {
   }
 
   getSummaryType() {
-    const hour = new Date().getHours();
-    if (hour <= 9) return "morning";
-    if (hour > 9 && hour < 18) return "afternoon";
-    if (hour >= 18) return "evening";
-    return "regular";
+    return "normal";
   }
 
   safelyFormatContent(content, maxLength = 200) {
@@ -54,25 +50,20 @@ class SummaryService {
     const startTime = new Date(now);
 
     switch (summaryType) {
-      case "morning":
-        // For morning summary, look at emails since 5 PM previous day
-        startTime.setDate(startTime.getDate() - 1);
-        startTime.setHours(17, 0, 0, 0); // 5 PM previous day
+      case "short":
+        startTime.setDate(startTime.getDate() - 4);
         break;
 
-      case "afternoon":
-        // For afternoon summary, look at emails since 9 AM same day
-        startTime.setHours(9, 0, 0, 0);
+      case "normal":
+        startTime.setDate(startTime.getDate() - 14);
         break;
 
-      case "evening":
-        // For evening summary, look at emails since 2 PM same day
-        startTime.setHours(14, 0, 0, 0);
+      case "long":
+        startTime.setMonth(startTime.getMonth() - 3);
         break;
 
       default:
-        // For regular/quick summary, look at last 3 hours
-        startTime.setHours(now.getHours() - 3);
+        startTime.setDate(startTime.getDate() - 4);
         break;
     }
 
@@ -252,21 +243,21 @@ Date: ${this.safelyFormatDate(email.internalDate)}`;
 
   getSummaryHeader(type) {
     switch (type) {
-      case "morning":
-        return `🌅 MORNING OVERVIEW
-Start your day with a clear picture of what needs attention.`;
+      case "short":
+        return `📊 RECENT OVERVIEW (4 DAYS)
+Key communications requiring your attention from the past 4 days.`;
 
-      case "afternoon":
-        return `🌞 MIDDAY CATCH-UP
-Focus on progress and emerging priorities.`;
+      case "normal":
+        return `📈 TWO-WEEK DIGEST
+Comprehensive overview of important communications from the past 2 weeks.`;
 
-      case "evening":
-        return `🌙 EVENING WRAP-UP
-Review the day's developments and prepare for tomorrow.`;
+      case "long":
+        return `📚 QUARTERLY REVIEW
+Three-month overview of significant communications and pending matters.`;
 
       default:
         return `📊 EMAIL SUMMARY
-Current status of important communications.`;
+Overview of important communications.`;
     }
   }
 }

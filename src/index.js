@@ -41,7 +41,7 @@ async function waitForUserResponse() {
         clearInterval(checkInterval);
         resolve();
       }
-    }, 1000); // Check every second
+    }, 500); // Reduced to 500ms for faster response
   });
 }
 
@@ -154,7 +154,6 @@ async function main() {
 
     // Set up interval for future checks
     setInterval(async () => {
-      // Only start new processing if there are no pending confirmations
       if (
         !telegramService.pendingConfirmations.has(
           parseInt(config.telegram.userId)
@@ -162,7 +161,7 @@ async function main() {
       ) {
         await processEmails();
       }
-    }, 5 * 60 * 1000);
+    }, 2 * 60 * 1000); // Reduced to 2 minutes for more frequent checks
 
     // Handle process termination
     process.on("SIGINT", () => {

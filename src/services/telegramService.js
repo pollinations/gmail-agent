@@ -27,9 +27,19 @@ class TelegramService {
       // Register general message handler
       this.bot.on("message", this.handleIncomingMessage.bind(this));
 
-      // Schedule summaries at 9 AM, 2 PM, and 7 PM
-      cron.schedule("0 9,14,19 * * *", () => {
-        this.sendScheduledSummary();
+      // Schedule weekly summaries instead of daily
+      cron.schedule("0 9 * * 1", () => { // Every Monday at 9 AM
+        this.sendScheduledSummary("normal"); // Two-week summary
+      });
+
+      // Monthly overview
+      cron.schedule("0 9 1 * *", () => { // First day of each month at 9 AM
+        this.sendScheduledSummary("long"); // Three-month summary
+      });
+
+      // Consider adding more frequent summaries during work hours
+      cron.schedule("0 9,12,15,18 * * 1-5", () => { // At 9 AM, 12 PM, 3 PM, and 6 PM on weekdays
+        this.sendScheduledSummary("short");
       });
 
       logger.info("Telegram bot initialized with scheduled summaries");
@@ -49,19 +59,15 @@ class TelegramService {
         return;
       }
 
-      await this.bot.sendMessage(msg.chat.id, "📊 Choose summary type:", {
+      await this.bot.sendMessage(msg.chat.id, "📊 Choose summary range:", {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: "🌅 Morning Overview", callback_data: "summary_morning" },
-              {
-                text: "🌞 Midday Catch-up",
-                callback_data: "summary_afternoon",
-              },
+              { text: "📊 Last 4 Days", callback_data: "summary_short" },
+              { text: "📈 Last 2 Weeks", callback_data: "summary_normal" },
             ],
             [
-              { text: "🌙 Evening Wrap-up", callback_data: "summary_evening" },
-              { text: "📋 Quick Summary", callback_data: "summary_regular" },
+              { text: "📚 Last 3 Months", callback_data: "summary_long" },
             ],
           ],
         },
@@ -180,6 +186,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
         error: error.message,
         stack: error.stack,
       });
+      console.error(error);
       await this.sendErrorMessage(callbackQuery.message.chat.id);
     }
   }
@@ -801,15 +808,15 @@ Please provide your answer:`;
     });
   }
 
-  async sendScheduledSummary() {
+  async sendScheduledSummary(type = "normal") {
     try {
       const currentTime = new Date();
       logger.info(
-        `Scheduled summary triggered at ${currentTime.toLocaleTimeString()}`
+        `Scheduled ${type} summary triggered at ${currentTime.toLocaleTimeString()}`
       );
-      const summary = await summaryService.generateHourlySummary();
+      const summary = await summaryService.generateHourlySummary(type);
       await this.bot.sendMessage(config.telegram.userId, summary);
-      logger.info("Scheduled summary sent successfully");
+      logger.info(`Scheduled ${type} summary sent successfully`);
     } catch (error) {
       logger.error("Error sending scheduled summary", { error: error.message });
     }

@@ -20,7 +20,7 @@ const config = {
     apiKey: process.env.OPENAI_API_KEY,
   },
   summary: {
-    maxEmailsInSummary: 500,
+    maxEmailsInSummary: 1000,
   },
 };
 

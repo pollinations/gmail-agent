@@ -114,6 +114,7 @@ class EmailService {
         error: error.message,
         stack: error.stack,
       });
+      console.error(error);
       throw error;
     }
   }

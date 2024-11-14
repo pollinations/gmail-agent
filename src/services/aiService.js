@@ -47,6 +47,8 @@ Keep the summary focused and prioritize the most recent communication while prov
   async analyzeEmail(email, isFollowUp = false) {
     try {
       const userData = await userService.getUserData();
+      // console.log("Got user data", userData);
+      console.log(`Got user data`, { userData });
       const relevantContext = await contextService.getRelevantContext(email);
 
       // Only check for additional info if this is not a follow-up
@@ -109,7 +111,7 @@ Provide your analysis using EXACTLY this format:
 
 Action: ARCHIVE or RESPOND
 Reason: [Clear explanation in English why this should be archived or requires response]
-Draft Response: [If action is RESPOND, provide your response using available context]
+Draft Response: [If action is RESPOND, write a well-structured response with clear paragraph breaks. Use line breaks between paragraphs for readability. Include an appropriate greeting and closing.]
 
 Important:
 - Be very conservative about suggesting responses
@@ -148,6 +150,7 @@ Double-check your classification before responding.`,
         error: error.message,
         emailId: email.id,
       });
+      console.error(error);
       throw error;
     }
   }
