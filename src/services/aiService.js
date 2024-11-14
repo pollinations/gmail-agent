@@ -96,8 +96,7 @@ Keep the summary focused and prioritize the most recent communication while prov
       }
 
       // Regular email analysis with context
-      const prompt = new PromptTemplate({
-        template: `You are an intelligent email assistant for {firstName} {lastName}. 
+      const template = `You are an intelligent email assistant for {firstName} {lastName}. 
 
 Available Historical Context:
 {combinedContext}
@@ -131,60 +130,28 @@ Classification Guidelines:
    - It's not part of an automated workflow
    - It requires your specific input or decision
 
-Task:
-1. Use the available context to inform your decision
-2. Apply the classification guidelines strictly
-3. If response is needed, use context to make it more relevant
-4. Format the response with proper paragraphs:
-   - Use double line breaks between paragraphs
-   - Each paragraph should be a complete thought
-   - Ensure greeting and signature are separated by double line breaks
+Required Response Format:
+Action: [RESPOND or ARCHIVE]
+Reason: [Brief explanation of why this action was chosen]
+Draft Response: [If action is RESPOND, include the full response text here]
 
-Provide your analysis using EXACTLY this format:
+Your response MUST follow this exact format with these exact labels.`;
 
-Action: ARCHIVE or RESPOND
-Reason: [Clear explanation in English why this should be archived or requires response]
-Draft Response: [If action is RESPOND, write a well-structured response with triple line breaks between paragraphs (\n\n\n). Ensure proper spacing between greeting, body paragraphs, and closing.]
-
-Important:
-- Be very conservative about suggesting responses
-- When in doubt, choose ARCHIVE
-- Notifications should ALWAYS be archived
-{signatureInstruction}
-
-Double-check your classification before responding.`,
-        inputVariables: [
-          "firstName",
-          "lastName",
-          "context",
-          "combinedContext",
-          "subject",
-          "from",
-          "emailDate",
-          "body",
-          "signatureInstruction",
-          "currentDate",
-        ],
+      const prompt = new PromptTemplate({
+        template: template,
+        inputVariables: ["firstName", "lastName", "combinedContext", "subject", "from", "emailDate", "body", "currentDate"]
       });
-
-    
 
       const formattedPrompt = await prompt.format({
         firstName: userData.firstName,
         lastName: userData.lastName || "",
-        context: JSON.stringify(relevantContext, null, 2),
         combinedContext: combinedContext,
-        subject: email.subject,
-        from: email.from,
+        subject: email.subject || "",
+        from: email.from || "",
         emailDate: new Date(parseInt(email.internalDate)).toLocaleString(),
-        body: email.body,
-        signatureInstruction: userData.preferences.useSignature
-          ? `- Include this signature in responses:\n${userData.signature}`
-          : "- DO NOT add any signature",
+        body: email.body || "",
         currentDate: currentDate,
       });
-
-      console.log("formattedPrompt", formattedPrompt);
 
       const response = await this.model.invoke(formattedPrompt);
       return this.parseAIResponse(response.content);
@@ -423,6 +390,7 @@ Task:
 
 Important:
 - Use \n\n between paragraphs for proper email formatting
+- DO NOT add any signature - it will be added automatically
 {signatureInstruction}
 
 Write a well-structured response with double line breaks between paragraphs (\n\n). Ensure proper spacing between greeting, body paragraphs, and closing.`

@@ -14,6 +14,7 @@ class TelegramService {
     this.editingResponses = new Map();
     this.isProcessing = false;
     this.processLoop = null;
+    this.autopilotMode = true;
   }
 
   async initialize() {
@@ -25,6 +26,7 @@ class TelegramService {
       this.bot.onText(/\/process/, this.handleProcessCommand.bind(this));
       this.bot.onText(/\/stop/, this.handleStopCommand.bind(this));
       this.bot.onText(/\/help/, this.handleHelpCommand.bind(this));
+      this.bot.onText(/\/autopilot/, this.handleAutopilotCommand.bind(this));
 
       // Register callback query handler
       this.bot.on("callback_query", this.handleCallbackQuery.bind(this));
@@ -92,7 +94,15 @@ Commands:
 /summary \- Request an email summary
 /process \- Start processing emails
 /stop \- Stop email processing
+/autopilot \- Toggle automatic processing
 /help \- Show this help message
+
+*Autopilot Mode:*
+• When enabled, automatically processes emails
+• Creates drafts for responses
+• Marks emails for archiving
+• No confirmation needed
+• Toggle with /autopilot command
 
 *Summary Types:*
 • Morning Overview \(9 AM\)
@@ -124,7 +134,15 @@ Commands:
 /summary - Request an email summary
 /process - Start processing emails
 /stop - Stop email processing
+/autopilot - Toggle automatic processing
 /help - Show this help message
+
+Autopilot Mode:
+• When enabled, automatically processes emails
+• Creates drafts for responses
+• Marks emails for archiving
+• No confirmation needed
+• Toggle with /autopilot command
 
 Summary Types:
 • Morning Overview (9 AM)
@@ -600,7 +618,43 @@ Reply with:
     try {
       if (analysis.action === "NEED_INFO") {
         logger.info(`Additional information needed for email ${emailData.id}`);
-        await this.sendNextQuestion(userId, emailData, 0, analysis.questions);
+        return;
+      }
+
+      // In autopilot mode, just execute the action immediately
+      if (this.autopilotMode) {
+        const confirmationData = {
+          emailId: emailData.id,
+          action: analysis.action,
+          draftResponse: analysis.draftResponse,
+          originalEmail: emailData,
+        };
+
+        // If this is an archive action, handle similar emails automatically
+        if (analysis.action === "ARCHIVE") {
+          const similarEmails = await emailService.findSimilarEmails(emailData);
+          if (similarEmails && similarEmails.length > 0) {
+            // In autopilot, archive all similar emails automatically
+            const allEmailIds = [
+              emailData.id,
+              ...similarEmails.map((email) => email.id),
+            ];
+            await emailService.bulkApplyToArchiveLabel(allEmailIds);
+            await this.bot.sendMessage(
+              userId,
+              `🤖 Auto-archived ${allEmailIds.length} similar emails - ${emailData.subject}`
+            );
+            return;
+          }
+        }
+
+        await this.executeConfirmedAction(userId, confirmationData);
+        
+        // Send a brief notification
+        await this.bot.sendMessage(
+          userId,
+          `🤖 Auto-processed: ${analysis.action === "RESPOND" ? "Created draft" : "Marked for archive"} - ${emailData.subject}`
+        );
         return;
       }
 
@@ -652,11 +706,7 @@ ${analysis.action === "RESPOND"
 
       logger.info(`Confirmation request sent for email ${emailData.id}`);
     } catch (error) {
-      logger.error("Error sending confirmation", {
-        error: error.message,
-        userId,
-        emailId: emailData?.id,
-      });
+      logger.error("Error in confirmation handling", { error: error.message });
       await this.sendErrorMessage(userId);
     }
   }
@@ -1220,6 +1270,48 @@ Please provide your answer:`;
       logger.error("Error initiating prompt editing", { error: error.message });
       console.error(error);
       await this.sendErrorMessage(userId);
+    }
+  }
+
+  // Add new autopilot command handler
+  async handleAutopilotCommand(msg) {
+    try {
+      // Verify user authorization
+      if (msg.from.id.toString() !== config.telegram.userId) {
+        logger.warn(`Unauthorized autopilot request from user ${msg.from.id}`);
+        return;
+      }
+
+      // Clean up any pending states
+      this.pendingConfirmations.clear();
+      this.editingResponses.clear();
+
+      this.autopilotMode = !this.autopilotMode; // Toggle autopilot mode
+      
+      await this.bot.sendMessage(
+        msg.chat.id,
+        `🤖 Autopilot mode ${this.autopilotMode ? 'enabled' : 'disabled'}\n${
+          this.autopilotMode 
+            ? 'I will automatically process emails without confirmation.\nUse /autopilot again to disable.'
+            : 'I will ask for confirmation before taking actions.'
+        }`,
+        {
+          reply_markup: {
+            remove_keyboard: true // Remove any existing keyboard
+          }
+        }
+      );
+
+      // If autopilot was enabled and we're not already processing, start processing
+      if (this.autopilotMode && !this.isProcessing) {
+        // Small delay to ensure previous state is cleared
+        setTimeout(() => {
+          this.handleProcessCommand(msg);
+        }, 500);
+      }
+    } catch (error) {
+      logger.error("Error handling autopilot command", { error: error.message });
+      await this.sendErrorMessage(msg.chat.id);
     }
   }
 }

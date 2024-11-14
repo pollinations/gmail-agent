@@ -969,15 +969,15 @@ class EmailService {
   // Add new method for applying ToArchive label
   async applyToArchiveLabel(emailId) {
     try {
-      // First, ensure the label exists
-      await this.ensureToArchiveLabelExists();
+      // Get the correct label ID
+      const labelId = await this.ensureToArchiveLabelExists();
 
       // Apply ToArchive label and remove UNREAD label
       await this.gmail.users.messages.modify({
         userId: "me",
         id: emailId,
         requestBody: {
-          addLabelIds: ["Label_ToArchive"],
+          addLabelIds: [labelId],
           removeLabelIds: ["UNREAD"],
         },
       });
@@ -996,11 +996,12 @@ class EmailService {
       logger.error(`Failed to apply ToArchive label to email ${emailId}`, {
         error: error.message,
       });
-      throw error;
+      console.error(error);
+      throw error; 
     }
   }
 
-  // Add method to ensure ToArchive label exists
+  // Update the ensureToArchiveLabelExists method
   async ensureToArchiveLabelExists() {
     try {
       // Get all labels
@@ -1008,25 +1009,20 @@ class EmailService {
         userId: "me",
       });
 
-      // Check if ToArchive label exists
+      // Check if toarchive label exists (case sensitive)
       const toArchiveLabel = response.data.labels.find(
-        (label) => label.name === "ToArchive"
+        (label) => label.name === "toarchive"
       );
 
       if (!toArchiveLabel) {
-        // Create the label if it doesn't exist
-        await this.gmail.users.labels.create({
-          userId: "me",
-          requestBody: {
-            name: "ToArchive",
-            labelListVisibility: "labelShow",
-            messageListVisibility: "show",
-          },
-        });
-        logger.info("Created ToArchive label");
+        logger.error("toarchive label not found - please create it manually in Gmail");
+        throw new Error("toarchive label not found");
       }
+
+      logger.info("Found existing toarchive label");
+      return toArchiveLabel.id;
     } catch (error) {
-      logger.error("Error ensuring ToArchive label exists", {
+      logger.error("Error ensuring toarchive label exists", {
         error: error.message,
       });
       throw error;

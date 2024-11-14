@@ -90,6 +90,7 @@ async function processEmails() {
       logger.error("Failed to initialize email service", {
         error: error.message,
       });
+      console.error(error);
       throw error;
     }
 
@@ -100,6 +101,7 @@ async function processEmails() {
       logger.error("Failed to initialize telegram service", {
         error: error.message,
       });
+      console.error(error);
       throw error;
     }
 
@@ -175,6 +177,7 @@ async function main() {
       error: error.message,
       stack: error.stack,
     });
+    console.error(error);
     process.exit(1);
   }
 }
