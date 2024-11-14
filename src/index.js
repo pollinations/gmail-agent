@@ -41,7 +41,7 @@ async function waitForUserResponse() {
         clearInterval(checkInterval);
         resolve();
       }
-    }, 500); // Reduced to 500ms for faster response
+    }, 250); // Further reduced to 250ms for even faster response
   });
 }
 
@@ -161,7 +161,7 @@ async function main() {
       ) {
         await processEmails();
       }
-    }, 2 * 60 * 1000); // Reduced to 2 minutes for more frequent checks
+    }, 60 * 1000); // Reduced to 1 minute for more frequent checks
 
     // Handle process termination
     process.on("SIGINT", () => {

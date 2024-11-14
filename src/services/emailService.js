@@ -673,7 +673,7 @@ class EmailService {
         },
       });
 
-      // Mark original email as read
+      // Mark original email as read and processed
       await this.gmail.users.messages.modify({
         userId: "me",
         id: emailId,
@@ -682,10 +682,15 @@ class EmailService {
         },
       });
 
-      logger.info(`Successfully sent response to email ${emailId}`);
+      // Add to processed emails set and remove from current batch
+      this.processedEmails.add(emailId);
+      this.currentEmailBatch = this.currentEmailBatch.filter(
+        (email) => email.id !== emailId
+      );
+
+      logger.info(`Successfully sent response to email ${emailId} and marked as processed`);
       return true;
     } catch (error) {
-      c;
       logger.error(`Failed to send response to email ${emailId}`, {
         error: error.message,
       });
@@ -738,6 +743,54 @@ class EmailService {
       });
       throw error;
     }
+  }
+
+  async markAsRead(emailId) {
+    try {
+      // Only remove UNREAD label
+      await this.gmail.users.messages.modify({
+        userId: "me",
+        id: emailId,
+        requestBody: {
+          removeLabelIds: ["UNREAD"],
+        },
+      });
+
+      // Add to processed emails set
+      this.processedEmails.add(emailId);
+
+      // Remove from current batch if present
+      this.currentEmailBatch = this.currentEmailBatch.filter(
+        (email) => email.id !== emailId
+      );
+
+      logger.info(`Successfully marked email ${emailId} as read`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to mark email ${emailId} as read`, {
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  async bulkMarkAsRead(emailIds) {
+    const results = [];
+    for (const emailId of emailIds) {
+      try {
+        await this.markAsRead(emailId);
+        results.push({ emailId, success: true });
+      } catch (error) {
+        results.push({ emailId, success: false, error: error.message });
+      }
+    }
+
+    // Force refresh the current batch after bulk operation
+    this.currentEmailBatch = this.currentEmailBatch.filter(
+      (email) => !emailIds.includes(email.id)
+    );
+
+    return results;
   }
 }
 

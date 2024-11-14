@@ -27,19 +27,19 @@ class TelegramService {
       // Register general message handler
       this.bot.on("message", this.handleIncomingMessage.bind(this));
 
-      // Schedule weekly summaries instead of daily
-      cron.schedule("0 9 * * 1", () => { // Every Monday at 9 AM
-        this.sendScheduledSummary("normal"); // Two-week summary
-      });
-
-      // Monthly overview
-      cron.schedule("0 9 1 * *", () => { // First day of each month at 9 AM
-        this.sendScheduledSummary("long"); // Three-month summary
-      });
-
-      // Consider adding more frequent summaries during work hours
-      cron.schedule("0 9,12,15,18 * * 1-5", () => { // At 9 AM, 12 PM, 3 PM, and 6 PM on weekdays
+      // Schedule summaries during work hours only (more frequent but less resource intensive)
+      cron.schedule("0,30 9-18 * * 1-5", () => { // Every 30 minutes during work hours on weekdays
         this.sendScheduledSummary("short");
+      });
+
+      // Weekly summary on Monday morning
+      cron.schedule("0 9 * * 1", () => {
+        this.sendScheduledSummary("normal");
+      });
+
+      // Monthly overview (kept as is since it's already minimal)
+      cron.schedule("0 9 1 * *", () => {
+        this.sendScheduledSummary("long");
       });
 
       logger.info("Telegram bot initialized with scheduled summaries");
@@ -205,6 +205,12 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
         return;
       }
 
+      // Handle bulk mark as read confirmation
+      if (confirmationData.type === "bulkMarkAsRead") {
+        await this.handleBulkMarkAsRead(msg.from.id, msg.text, confirmationData);
+        return;
+      }
+
       // Handle follow-up questions
       if (confirmationData.type === "followUp") {
         await this.handleFollowUpResponse(msg, confirmationData);
@@ -309,8 +315,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
 
   async handleActionResponse(msg, confirmationData) {
     try {
-      const { emailId, action, draftResponse, originalEmail } =
-        confirmationData;
+      const { emailId, action, draftResponse, originalEmail } = confirmationData;
 
       switch (msg.text) {
         case "1":
@@ -336,6 +341,14 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
         case "4":
           if (action === "RESPOND") {
             await this.handleForceArchive(msg.from.id, emailId);
+          } else {
+            await this.handleMarkAsRead(msg.from.id, emailId);
+          }
+          break;
+
+        case "5":
+          if (action === "RESPOND") {
+            await this.handleMarkAsRead(msg.from.id, emailId);
           }
           break;
 
@@ -355,8 +368,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
 
   async executeConfirmedAction(userId, confirmationData) {
     try {
-      const { emailId, action, draftResponse, originalEmail } =
-        confirmationData;
+      const { emailId, action, draftResponse, originalEmail } = confirmationData;
 
       if (!emailId || !action) {
         logger.error("Invalid confirmation data", { confirmationData });
@@ -374,6 +386,9 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
           }
           await emailService.sendResponse(emailId, draftResponse);
           await this.bot.sendMessage(userId, "✅ Response sent successfully!");
+          
+          // Ensure email is marked as processed
+          emailService.markAsProcessed(emailId);
           break;
 
         case "ARCHIVE":
@@ -549,16 +564,13 @@ ${
 Reply with:
 1️⃣ to Confirm
 2️⃣ to Reject
-${
-  analysis.action === "RESPOND"
-    ? "3️⃣ to Edit Response\n4️⃣ to Force Archive"
-    : "3️⃣ to Force Reply"
-}`;
+${analysis.action === "RESPOND" 
+  ? "3️⃣ to Edit Response\n4️⃣ to Force Archive\n5️⃣ to Mark as Read" 
+  : "3️⃣ to Force Reply\n4️⃣ to Mark as Read"}`;
 
-      const keyboard =
-        analysis.action === "RESPOND"
-          ? [["1", "2", "3", "4"]]
-          : [["1", "2", "3"]];
+      const keyboard = analysis.action === "RESPOND" 
+        ? [["1", "2", "3", "4", "5"]]
+        : [["1", "2", "3", "4"]];
 
       await this.bot.sendMessage(userId, message, {
         parse_mode: "MarkdownV2",
@@ -900,6 +912,155 @@ Please provide your answer:`;
     } catch (error) {
       logger.error("Error handling force archive", { error: error.message });
       await this.sendErrorMessage(userId);
+    }
+  }
+
+  async handleMarkAsRead(userId, emailId) {
+    try {
+      // Check for similar emails before marking as read
+      const confirmationData = this.pendingConfirmations.get(parseInt(userId));
+      const originalEmail = confirmationData?.originalEmail;
+
+      if (originalEmail) {
+        const similarEmails = await emailService.findSimilarEmails(originalEmail);
+
+        if (similarEmails && similarEmails.length > 0) {
+          await this.askBulkMarkAsReadConfirmation(
+            userId,
+            similarEmails,
+            emailId,
+            originalEmail
+          );
+          return; // Don't clear confirmation yet
+        }
+      }
+
+      await emailService.markAsRead(emailId);
+      await this.bot.sendMessage(userId, "✅ Email marked as read!");
+      this.pendingConfirmations.delete(userId);
+    } catch (error) {
+      logger.error("Error marking email as read", { error: error.message });
+      await this.sendErrorMessage(userId);
+    }
+  }
+
+  async askBulkMarkAsReadConfirmation(userId, similarEmails, originalEmailId, originalEmail) {
+    try {
+      // Limit the number of similar emails shown
+      const displayEmails = similarEmails.slice(0, 5);
+      const totalCount = similarEmails.length;
+
+      const header = `📧 *Similar Emails Found*\n\nFound ${totalCount} similar emails${
+        totalCount > 5 ? " (showing first 5)" : ""
+      }\\.`;
+
+      const originalSection = `\n\n*Original Email:*\nFrom: ${this.escapeSpecialChars(
+        originalEmail.from
+      )}\nSubject: ${this.escapeSpecialChars(originalEmail.subject)}`;
+
+      const similarSection = displayEmails
+        .map(
+          (email, index) =>
+            `${index + 1}\\. *From:* ${this.escapeSpecialChars(
+              email.from
+            )}\n    *Subject:* ${this.escapeSpecialChars(email.subject)}`
+        )
+        .join("\n\n");
+
+      const footer = `\n\nReply with:\n1️⃣ to Mark All as Read \\(${totalCount} emails\\)\n2️⃣ to Mark Original Only\n3️⃣ to Select Individual Emails`;
+
+      const message = `${header}${originalSection}\n\n*Similar Emails:*\n${similarSection}${footer}`;
+
+      try {
+        await this.bot.sendMessage(userId, message, {
+          parse_mode: "MarkdownV2",
+          reply_markup: {
+            keyboard: [["1", "2", "3"]],
+            one_time_keyboard: true,
+            resize_keyboard: true,
+          },
+        });
+      } catch (sendError) {
+        // Fallback to simpler message if formatting fails
+        const fallbackMessage = `📧 Similar Emails Found\n\nFound ${totalCount} similar emails. Would you like to mark them all as read?\n\n1️⃣ Mark All as Read\n2️⃣ Mark Original Only\n3️⃣ Select Individual Emails`;
+
+        await this.bot.sendMessage(userId, fallbackMessage, {
+          reply_markup: {
+            keyboard: [["1", "2", "3"]],
+            one_time_keyboard: true,
+            resize_keyboard: true,
+          },
+        });
+      }
+
+      // Store the confirmation data
+      this.pendingConfirmations.set(parseInt(userId), {
+        type: "bulkMarkAsRead",
+        originalEmailId,
+        originalEmail,
+        similarEmails,
+      });
+    } catch (error) {
+      logger.error("Error sending bulk mark as read confirmation", {
+        error: error.message,
+        userId,
+        emailCount: similarEmails?.length,
+      });
+      await this.sendErrorMessage(userId);
+    }
+  }
+
+  async handleBulkMarkAsRead(userId, choice, confirmationData) {
+    try {
+      const { originalEmailId, similarEmails } = confirmationData;
+
+      switch (choice) {
+        case "1":
+          // Mark all emails as read
+          const allEmailIds = [
+            originalEmailId,
+            ...similarEmails.map((email) => email.id),
+          ];
+
+          logger.info(`Bulk marking ${allEmailIds.length} emails as read`);
+          const results = await emailService.bulkMarkAsRead(allEmailIds);
+
+          const successCount = results.filter((r) => r.success).length;
+          await this.bot.sendMessage(
+            userId,
+            `✅ Successfully marked ${successCount} emails as read!`
+          );
+          break;
+
+        case "2":
+          // Mark only original email as read
+          logger.info(`Marking only original email ${originalEmailId} as read`);
+          await emailService.markAsRead(originalEmailId);
+          await this.bot.sendMessage(
+            userId,
+            "✅ Original email marked as read!"
+          );
+          break;
+
+        case "3":
+          // Show individual selection interface
+          await this.showEmailSelectionInterface(userId, {
+            ...confirmationData,
+            action: "markAsRead"
+          });
+          return; // Don't clear pending confirmations yet
+
+        default:
+          logger.warn(`Unexpected bulk mark as read choice: ${choice}`);
+          await this.sendErrorMessage(userId);
+      }
+
+      // Clear pending confirmations
+      this.pendingConfirmations.delete(userId);
+    } catch (error) {
+      logger.error(`Error in bulk mark as read operation`, { error: error.message });
+      await this.sendErrorMessage(userId);
+      this.pendingConfirmations.delete(userId);
     }
   }
 }
