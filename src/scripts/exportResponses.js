@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const config = require("../config/config");
 const logger = require("../utils/logger");
+const userService = require("../services/userService");
 
 async function initializeGmail() {
   try {
@@ -62,23 +63,36 @@ function extractEmailContent(message) {
 
   body = getBody(message.payload);
 
-  // Clean the body
+  // Clean the body and preserve line breaks
   body = body
     .replace(/<[^>]*>/g, "") // Remove HTML tags
-    .replace(/\s+/g, " ") // Normalize whitespace
+    .replace(/(\r\n|\n|\r)/g, "\n") // Normalize line endings
+    .replace(/\n{2,}/g, "\n\n") // Ensure double line breaks for paragraphs
     .trim();
 
   return { from, subject, date, body };
 }
 
-function formatThreadAsMarkdown(thread) {
+function isMyEmail(from, myEmails) {
+  // Normalize the email addresses for comparison
+  const normalizedFrom = from.toLowerCase();
+  return myEmails.some(email => normalizedFrom.includes(email.toLowerCase()));
+}
+
+async function formatThreadAsMarkdown(thread, myEmails) {
   const messages = thread.messages;
   if (!messages || messages.length === 0) return null;
 
+  // Find the original email (first non-me message)
+  const originalMessage = messages.find(message => {
+    const from = message.payload.headers.find(h => h.name === "From")?.value || "";
+    return !isMyEmail(from, myEmails);
+  });
+
+  if (!originalMessage) return null;
+
   let markdown = [];
-  
-  // Get the first message (original email)
-  const firstMessage = extractEmailContent(messages[0]);
+  const firstMessage = extractEmailContent(originalMessage);
   
   markdown.push(`## ${firstMessage.subject}`);
   markdown.push(`**From:** ${firstMessage.from}`);
@@ -86,29 +100,39 @@ function formatThreadAsMarkdown(thread) {
   markdown.push("\n### Original Email");
   markdown.push(firstMessage.body);
   
-  // Get my responses (last message in thread if it's from me)
-  if (messages.length > 1) {
-    const lastMessage = extractEmailContent(messages[messages.length - 1]);
-    if (lastMessage.from.includes("me") || lastMessage.from.includes(config.gmail.userEmail)) {
-      markdown.push("\n### My Response");
-      markdown.push(lastMessage.body);
-    }
+  // Get my responses (messages from me after the original email)
+  const myResponses = messages
+    .filter(message => {
+      const from = message.payload.headers.find(h => h.name === "From")?.value || "";
+      return isMyEmail(from, myEmails);
+    });
+
+  if (myResponses.length > 0) {
+    const lastResponse = extractEmailContent(myResponses[myResponses.length - 1]);
+    markdown.push("\n### My Response");
+    markdown.push(lastResponse.body);
+  } else {
+    // Skip threads without my response
+    return null;
   }
 
   markdown.push("\n---\n");
   return markdown.join("\n");
 }
 
-async function exportResponses() {
+async function exportResponses(limit = 20) {
   try {
-    logger.info("Starting email response export");
+    logger.info(`Starting email response export with limit: ${limit}`);
     const gmail = await initializeGmail();
+    const userData = await userService.getUserData();
+    const myEmails = userData.emails;
+    logger.info(`Using emails: ${myEmails.join(", ")}`);
 
     // Get all threads where I've responded
     const response = await gmail.users.threads.list({
       userId: "me",
-      q: "in:sent",
-      maxResults: 500, // Adjust as needed
+      q: myEmails.map(email => `from:${email}`).join(" OR "),
+      maxResults: limit * 2, // Fetch more since we'll filter some out
     });
 
     if (!response.data.threads) {
@@ -116,22 +140,26 @@ async function exportResponses() {
       return;
     }
 
-    let markdown = "# Email Response History\n\n";
+    let markdown = `# Email Response History (Last ${limit} Responses)\n\n`;
     let processedCount = 0;
+    let threadsWithResponses = 0;
 
     for (const thread of response.data.threads) {
+      if (threadsWithResponses >= limit) break;
+
       const threadData = await getEmailThread(gmail, thread.id);
       if (threadData) {
-        const threadMarkdown = formatThreadAsMarkdown(threadData);
+        const threadMarkdown = await formatThreadAsMarkdown(threadData, myEmails);
         if (threadMarkdown) {
           markdown += threadMarkdown;
-          processedCount++;
+          threadsWithResponses++;
         }
       }
 
-      // Log progress every 10 threads
-      if (processedCount % 10 === 0) {
-        logger.info(`Processed ${processedCount} threads...`);
+      processedCount++;
+      // Log progress every 5 threads
+      if (processedCount % 5 === 0) {
+        logger.info(`Processed ${processedCount} threads, found ${threadsWithResponses} with responses...`);
       }
     }
 
@@ -139,12 +167,13 @@ async function exportResponses() {
     const exportDir = path.join(process.cwd(), "exports");
     await fs.mkdir(exportDir, { recursive: true });
 
-    // Save with timestamp
+    // Save with timestamp and limit info
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filePath = path.join(exportDir, `email-responses-${timestamp}.md`);
+    const filePath = path.join(exportDir, `email-responses-${limit}-${timestamp}.md`);
     await fs.writeFile(filePath, markdown);
 
-    logger.info(`Successfully exported ${processedCount} email threads to ${filePath}`);
+    logger.info(`Successfully exported ${threadsWithResponses} email threads with responses to ${filePath}`);
+    return filePath;
   } catch (error) {
     logger.error("Failed to export responses", { error: error.message });
     throw error;
@@ -153,7 +182,16 @@ async function exportResponses() {
 
 // Run the export if called directly
 if (require.main === module) {
-  exportResponses().catch((error) => {
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const limit = args.length > 0 ? parseInt(args[0], 10) : 20;
+
+  if (isNaN(limit) || limit <= 0) {
+    console.error("Please provide a valid positive number for the limit");
+    process.exit(1);
+  }
+
+  exportResponses(limit).catch((error) => {
     console.error("Export failed:", error);
     process.exit(1);
   });

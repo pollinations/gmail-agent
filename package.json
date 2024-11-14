@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "setup": "node src/utils/setupWizard.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "export-responses": "node src/scripts/exportResponses.js"
+    "export-responses": "node src/scripts/exportResponses.js",
+    "export-all-responses": "node src/scripts/exportResponses.js 500"
   },
   "keywords": [
     "gmail",
