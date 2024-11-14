@@ -3,262 +3,172 @@ const { PromptTemplate } = require("@langchain/core/prompts");
 const config = require("../config/config");
 const emailService = require("./emailService");
 const logger = require("../utils/logger");
-const { encode, decode } = require("gpt-3-encoder");
+const { encode } = require("gpt-3-encoder");
 
 class SummaryService {
   constructor() {
     this.model = new ChatOpenAI({
       openAIApiKey: config.openai.apiKey,
       temperature: 0.7,
-      modelName: "gpt-4o-mini",
-      maxTokens: 4000,
+      modelName: "gpt-4-turbo-preview",
     });
-    this.MAX_TOKENS = 128000;
-    this.MAX_RESPONSE_TOKENS = 4000;
-    this.AVAILABLE_CONTEXT_TOKENS = this.MAX_TOKENS - this.MAX_RESPONSE_TOKENS;
   }
 
-  getSummaryType() {
-    return "normal";
-  }
-
-  safelyFormatContent(content, maxLength = 200) {
+  async generateHourlySummary(type = "normal") {
     try {
-      if (!content) return "";
-      return content
-        .substring(0, maxLength)
-        .replace(/[\x00-\x1F\x7F-\x9F]/g, "");
-    } catch (error) {
-      logger.error("Error formatting content", { error: error.message });
-      return "";
-    }
-  }
-
-  safelyFormatDate(timestamp) {
-    try {
-      if (!timestamp) return "Unknown Date";
-      const date = new Date(parseInt(timestamp));
-      return date.toISOString();
-    } catch (error) {
-      logger.error("Error formatting date", { error: error.message });
-      return "Unknown Date";
-    }
-  }
-
-  getTimeRangeForSummary(summaryType) {
-    const now = new Date();
-    const startTime = new Date(now);
-
-    switch (summaryType) {
-      case "short":
-        startTime.setDate(startTime.getDate() - 4);
-        break;
-
-      case "normal":
-        startTime.setDate(startTime.getDate() - 14);
-        break;
-
-      case "long":
-        startTime.setMonth(startTime.getMonth() - 3);
-        break;
-
-      default:
-        startTime.setDate(startTime.getDate() - 4);
-        break;
-    }
-
-    return startTime;
-  }
-
-  async generateHourlySummary() {
-    try {
-      const currentTime = new Date();
-      const summaryType = this.getSummaryType();
-      const startTime = this.getTimeRangeForSummary(summaryType);
-
-      logger.info(
-        `Starting ${summaryType} summary generation from ${startTime.toISOString()} to ${currentTime.toISOString()}`
+      // Get time range based on summary type
+      const timeRange = this.getTimeRange(type);
+      
+      // Fetch emails within the time range
+      const emails = await emailService.fetchEmailsInRange(
+        timeRange.startTime,
+        timeRange.endTime
       );
 
-      const emails = await emailService.fetchEmailsSince(startTime);
-      logger.info(`Fetched ${emails.length} emails for ${summaryType} summary`);
-
-      if (emails.length === 0) {
-        return `No new emails requiring attention since ${startTime.toLocaleTimeString()} ${
-          startTime.getDate() !== currentTime.getDate()
-            ? "(yesterday)"
-            : "(today)"
-        }.`;
+      if (!emails.length) {
+        return "No emails found in the selected time range.";
       }
 
-      const header = this.getSummaryHeader(summaryType);
-      const basePrompt = `You are an email summary assistant analyzing emails for the ${summaryType} summary.
+      logger.info(`Generating summary for ${emails.length} emails`);
 
-${header}
+      // Generate summary using batched processing if needed
+      const summary = await this.generateSummaryForEmails(emails);
 
-STRICT RULES:
-1. DO NOT generate email responses
-2. DO NOT use greeting formats
-3. ONLY use the exact format specified below
-4. EXCLUDE all automated and marketing emails
+      return this.formatSummaryResponse(summary, timeRange, emails.length);
+    } catch (error) {
+      logger.error("Error generating summary", { error: error.message });
+      return `Error generating summary: ${error.message}`;
+    }
+  }
 
-EXCLUSION CRITERIA - Ignore these types:
-- Automated notifications/alerts
-- Newsletters/marketing emails
-- System-generated messages
-- Calendar invites/updates
-- Subscription confirmations
-- Receipts/invoices
-- Social media notifications
-- Promotional offers
-- No-reply sender emails
-- Delivery status updates
+  getTimeRange(type) {
+    const now = new Date();
+    let startTime = new Date();
+    
+    switch (type) {
+      case "morning": // Overnight (5 PM yesterday to now)
+        startTime.setDate(startTime.getDate() - 1);
+        startTime.setHours(17, 0, 0, 0);
+        break;
+      
+      case "midday": // Since 9 AM
+        startTime.setHours(9, 0, 0, 0);
+        break;
+      
+      case "evening": // Since 2 PM
+        startTime.setHours(14, 0, 0, 0);
+        break;
+      
+      case "quick": // Last 3 hours
+        startTime.setHours(now.getHours() - 3);
+        break;
+      
+      default: // Last 24 hours
+        startTime.setHours(now.getHours() - 24);
+    }
 
-FOCUS CRITERIA - Only include emails that:
-- Require human attention/response
-- Contain business-critical information
-- Include personal messages needing action
-- Have time-sensitive requests
-- Contain important project updates
-- Ask direct questions needing answers
+    return {
+      startTime,
+      endTime: now,
+      type
+    };
+  }
 
-REQUIRED FORMAT:
+  async generateSummaryForEmails(emails) {
+    // Prepare the email data for the prompt
+    const emailData = emails.map(email => ({
+      subject: email.subject || 'No Subject',
+      from: email.from || 'Unknown Sender',
+      date: email.date || new Date().toISOString(),
+      priority: this.calculatePriority(email)
+    }));
 
-1️⃣ BRIEF OVERVIEW
-[2-3 sentences summarizing key actionable communications]
+    const prompt = PromptTemplate.fromTemplate(`
+Summarize these emails concisely and highlight important items:
 
-2️⃣ TOP 5 PRIORITY EMAILS
-1. [Sender Name] - [Subject]
-   Priority: [High/Medium]
-   Action Needed: [Brief description of required action]
-
-2. [Next priority email...]
-   (Continue format for up to 5 emails)
-
-3️⃣ KEY INSIGHTS
-• [Key deadline or decision needed]
-• [Important trend or pattern]
-• [Critical upcoming action item]
-
-EMAILS TO ANALYZE:
-
+Emails:
 {emails}
 
-Remember: Only include emails requiring human attention or action. Maintain the exact format specified above.`;
+Provide a summary that:
+1. Highlights urgent or important emails first
+2. Groups similar topics together
+3. Lists any required actions
+4. Identifies key trends or patterns
 
-      // Calculate available tokens for emails
-      const promptTokens = encode(basePrompt).length;
-      const tokensPerEmail = 300;
-      const maxEmails = Math.floor(
-        (this.AVAILABLE_CONTEXT_TOKENS - promptTokens) / tokensPerEmail
-      );
+Format:
+🚨 URGENT/IMPORTANT:
+[List urgent items]
 
-      // Take more emails but still respect config maximum if set
-      const configMax =
-        config.summary.maxEmailsInSummary || Number.MAX_SAFE_INTEGER;
-      const limitedEmails = emails.slice(-Math.min(maxEmails, configMax));
+📥 KEY UPDATES:
+[Group by topic/sender]
 
-      logger.info(
-        `Processing ${limitedEmails.length} emails within token limit`
-      );
+⚡️ ACTIONS NEEDED:
+[List required actions]
 
-      // Process emails in batches if needed
-      const BATCH_SIZE = 100;
-      let formattedEmails = [];
+📊 INSIGHTS:
+[Any patterns or trends]`);
 
-      for (let i = 0; i < limitedEmails.length; i += BATCH_SIZE) {
-        const batch = limitedEmails.slice(i, i + BATCH_SIZE);
-        const batchFormatted = batch
-          .map((email) => {
-            try {
-              return `From: ${this.safelyFormatContent(email.from) || "Unknown"}
-Subject: ${this.safelyFormatContent(email.subject) || "No Subject"}
-Content: ${this.safelyFormatContent(email.body, 500)}
-Date: ${this.safelyFormatDate(email.internalDate)}`;
-            } catch (error) {
-              logger.error(`Error formatting email ${email.id}`, {
-                error: error.message,
-                emailId: email.id,
-              });
-              return null;
-            }
-          })
-          .filter(Boolean);
+    const formattedEmails = emailData
+      .map(email => `From: ${email.from}\nSubject: ${email.subject}\nPriority: ${email.priority}`)
+      .join('\n\n');
 
-        formattedEmails = formattedEmails.concat(batchFormatted);
-      }
+    const response = await this.model.invoke(
+      await prompt.format({ emails: formattedEmails })
+    );
 
-      if (formattedEmails.length === 0) {
-        return "Error: Unable to process emails for summary. Please try again later.";
-      }
-
-      const emailContent = formattedEmails.join("\n\n---\n\n");
-      const totalTokens = encode(basePrompt + emailContent).length;
-
-      logger.info(`Total tokens for request: ${totalTokens}`);
-      if (totalTokens > this.AVAILABLE_CONTEXT_TOKENS) {
-        logger.warn(`Token limit exceeded, truncating content`);
-        // If we exceed token limit, truncate the content
-        const truncatedContent = decode(
-          encode(basePrompt + emailContent).slice(
-            0,
-            this.AVAILABLE_CONTEXT_TOKENS
-          )
-        );
-        formattedEmails = [truncatedContent];
-      }
-
-      const prompt = PromptTemplate.fromTemplate(basePrompt);
-      const formattedPrompt = await prompt.format({
-        emails: formattedEmails.join("\n\n---\n\n"),
-      });
-
-      logger.info("Making request to GPT-4");
-      const response = await this.model.invoke(formattedPrompt);
-      logger.info("Received response from GPT-4");
-
-      if (!response || !response.content) {
-        throw new Error("Invalid response from GPT-4");
-      }
-
-      return response.content.trim();
-    } catch (error) {
-      logger.error("Error generating summary", {
-        error: error.message,
-        stack: error.stack,
-        type: error.constructor.name,
-      });
-
-      if (error.message.includes("token")) {
-        return "Error: The email content was too large to process. Please try with a shorter time range.";
-      } else if (error.message.includes("rate limit")) {
-        return "Error: Rate limit exceeded. Please try again in a few minutes.";
-      } else if (error.message.includes("invalid_api_key")) {
-        return "Error: OpenAI API key configuration issue. Please contact support.";
-      }
-
-      return "Error generating summary. Please try again later or contact support.";
-    }
+    return response.content;
   }
 
-  getSummaryHeader(type) {
-    switch (type) {
-      case "short":
-        return `📊 RECENT OVERVIEW (4 DAYS)
-Key communications requiring your attention from the past 4 days.`;
-
-      case "normal":
-        return `📈 TWO-WEEK DIGEST
-Comprehensive overview of important communications from the past 2 weeks.`;
-
-      case "long":
-        return `📚 QUARTERLY REVIEW
-Three-month overview of significant communications and pending matters.`;
-
-      default:
-        return `📊 EMAIL SUMMARY
-Overview of important communications.`;
+  calculatePriority(email) {
+    // Simple priority calculation based on sender and subject keywords
+    const priorityKeywords = ['urgent', 'asap', 'important', 'deadline', 'critical'];
+    const subject = email.subject?.toLowerCase() || '';
+    
+    if (priorityKeywords.some(keyword => subject.includes(keyword))) {
+      return 'High';
     }
+    
+    // Add more sophisticated priority logic here if needed
+    return 'Normal';
+  }
+
+  formatSummaryResponse(summary, timeRange, emailCount) {
+    const timeRangeStr = this.formatTimeRange(timeRange);
+    
+    return `📧 Email Summary (${timeRangeStr})
+Total Emails: ${emailCount}
+
+${summary}
+
+Use /process to start processing these emails.`;
+  }
+
+  formatTimeRange(timeRange) {
+    const formatTime = (date) => {
+      return date.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+      });
+    };
+
+    const formatDate = (date) => {
+      return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric' 
+      });
+    };
+
+    const start = formatTime(timeRange.startTime);
+    const end = formatTime(timeRange.endTime);
+    const startDate = formatDate(timeRange.startTime);
+    const endDate = formatDate(timeRange.endTime);
+
+    if (startDate === endDate) {
+      return `${startDate}, ${start} - ${end}`;
+    }
+    
+    return `${startDate} ${start} - ${endDate} ${end}`;
   }
 }
 

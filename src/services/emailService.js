@@ -138,12 +138,12 @@ class EmailService {
     try {
       const response = await this.gmail.users.messages.list({
         userId: "me",
-        q: "is:unread",
+        q: "is:unread category:primary",
         maxResults: 500,
       });
 
       if (!response.data.messages) {
-        logger.info("No unread messages found");
+        logger.info("No unread messages found in Primary category");
         return [];
       }
 
@@ -159,7 +159,7 @@ class EmailService {
           })
       );
 
-      logger.info(`Fetched ${this.currentEmailBatch.length} new unread emails`);
+      logger.info(`Fetched ${this.currentEmailBatch.length} new unread emails from Primary category`);
       return this.currentEmailBatch;
     } catch (error) {
       logger.error("Failed to fetch unread emails", { error: error.message });
@@ -722,19 +722,33 @@ class EmailService {
     try {
       logger.info(`Fetching emails since ${sinceTime}`);
 
-      // Use existing fetchUnreadEmails to get all unread emails
-      const allEmails = await this.fetchUnreadEmails();
-
-      // Filter emails based on internal date from Gmail API
-      const filteredEmails = allEmails.filter((email) => {
-        // Gmail API provides internalDate in milliseconds since epoch
-        const emailDate = new Date(parseInt(email.internalDate));
-        const isAfter = emailDate > sinceTime;
-
-        return isAfter;
+      const response = await this.gmail.users.messages.list({
+        userId: "me",
+        q: "category:primary",
+        maxResults: 500,
       });
 
-      logger.info(`Found ${filteredEmails.length} emails since ${sinceTime}`);
+      if (!response.data.messages) {
+        return [];
+      }
+
+      const emails = await Promise.all(
+        response.data.messages.map(async (message) => {
+          const email = await this.gmail.users.messages.get({
+            userId: "me",
+            id: message.id,
+          });
+          return this.parseEmail(email.data);
+        })
+      );
+
+      // Filter emails based on internal date
+      const filteredEmails = emails.filter((email) => {
+        const emailDate = new Date(parseInt(email.internalDate));
+        return emailDate > sinceTime;
+      });
+
+      logger.info(`Found ${filteredEmails.length} Primary category emails since ${sinceTime}`);
       return filteredEmails;
     } catch (error) {
       logger.error("Failed to fetch emails since last summary", {
@@ -791,6 +805,43 @@ class EmailService {
     );
 
     return results;
+  }
+
+  async fetchEmailsInRange(startTime, endTime) {
+    try {
+      logger.info(`Fetching emails between ${startTime} and ${endTime}`);
+
+      const response = await this.gmail.users.messages.list({
+        userId: "me",
+        q: `category:primary after:${Math.floor(startTime.getTime() / 1000)} before:${Math.floor(endTime.getTime() / 1000)}`,
+        maxResults: 500,
+      });
+
+      if (!response.data.messages) {
+        logger.info("No messages found in the specified time range");
+        return [];
+      }
+
+      const emails = await Promise.all(
+        response.data.messages.map(async (message) => {
+          const email = await this.gmail.users.messages.get({
+            userId: "me",
+            id: message.id,
+          });
+          return this.parseEmail(email.data);
+        })
+      );
+
+      logger.info(`Found ${emails.length} emails in the specified time range`);
+      return emails;
+    } catch (error) {
+      logger.error("Failed to fetch emails in range", {
+        error: error.message,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+      });
+      throw error;
+    }
   }
 }
 

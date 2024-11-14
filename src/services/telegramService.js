@@ -5,12 +5,15 @@ const emailService = require("./emailService");
 const aiService = require("./aiService");
 const summaryService = require("./summaryService");
 const cron = require("node-cron");
+const { processEmails } = require("../index");
 
 class TelegramService {
   constructor() {
     this.bot = null;
     this.pendingConfirmations = new Map();
     this.editingResponses = new Map();
+    this.isProcessing = false;
+    this.processLoop = null;
   }
 
   async initialize() {
@@ -19,6 +22,8 @@ class TelegramService {
 
       // Register command handlers
       this.bot.onText(/\/summary/, this.handleSummaryCommand.bind(this));
+      this.bot.onText(/\/process/, this.handleProcessCommand.bind(this));
+      this.bot.onText(/\/stop/, this.handleStopCommand.bind(this));
       this.bot.onText(/\/help/, this.handleHelpCommand.bind(this));
 
       // Register callback query handler
@@ -80,12 +85,13 @@ class TelegramService {
 
   async handleHelpCommand(msg) {
     try {
-      // Escape special characters for MarkdownV2 format
       const helpMessage = `
 📧 *Gmail Agent Help*
 
 Commands:
 /summary \- Request an email summary
+/process \- Start processing emails
+/stop \- Stop email processing
 /help \- Show this help message
 
 *Summary Types:*
@@ -116,6 +122,8 @@ Commands:
 
 Commands:
 /summary - Request an email summary
+/process - Start processing emails
+/stop - Stop email processing
 /help - Show this help message
 
 Summary Types:
@@ -1061,6 +1069,81 @@ Please provide your answer:`;
       logger.error(`Error in bulk mark as read operation`, { error: error.message });
       await this.sendErrorMessage(userId);
       this.pendingConfirmations.delete(userId);
+    }
+  }
+
+  // Add new command handler for processing emails
+  async handleProcessCommand(msg) {
+    try {
+      // Verify user authorization
+      if (msg.from.id.toString() !== config.telegram.userId) {
+        logger.warn(`Unauthorized process request from user ${msg.from.id}`);
+        return;
+      }
+
+      if (this.isProcessing) {
+        await this.bot.sendMessage(
+          msg.chat.id,
+          "📧 Email processing is already running. Use /stop to stop it first."
+        );
+        return;
+      }
+
+      this.isProcessing = true;
+      await this.bot.sendMessage(msg.chat.id, "📧 Starting email processing...");
+
+      try {
+        // Do initial processing
+        await processEmails();
+
+        // Start the processing loop
+        this.processLoop = setInterval(async () => {
+          if (!this.pendingConfirmations.has(parseInt(config.telegram.userId))) {
+            await processEmails();
+          }
+        }, 60 * 1000);
+      } catch (error) {
+        this.isProcessing = false;
+        if (this.processLoop) {
+          clearInterval(this.processLoop);
+          this.processLoop = null;
+        }
+        throw error;
+      }
+    } catch (error) {
+      logger.error("Error handling process command", { error: error.message });
+      await this.sendErrorMessage(msg.chat.id);
+    }
+  }
+
+  // Add stop command handler
+  async handleStopCommand(msg) {
+    try {
+      // Verify user authorization
+      if (msg.from.id.toString() !== config.telegram.userId) {
+        logger.warn(`Unauthorized stop request from user ${msg.from.id}`);
+        return;
+      }
+
+      if (!this.isProcessing) {
+        await this.bot.sendMessage(
+          msg.chat.id,
+          "📧 Email processing is not currently running."
+        );
+        return;
+      }
+
+      // Clear the processing loop
+      if (this.processLoop) {
+        clearInterval(this.processLoop);
+        this.processLoop = null;
+      }
+      this.isProcessing = false;
+
+      await this.bot.sendMessage(msg.chat.id, "📧 Email processing stopped.");
+    } catch (error) {
+      logger.error("Error handling stop command", { error: error.message });
+      await this.sendErrorMessage(msg.chat.id);
     }
   }
 }
