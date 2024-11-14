@@ -30,12 +30,13 @@ class AIService {
       this.contextCache = combinedContext;
       return combinedContext;
     } catch (error) {
+      console.error("Failed to load context files:", error);
       logger.error("Failed to load context files", { error: error.message });
       return "";
     }
   }
 
-  async callPollinationsAPI(messages, model = "openai") {
+  async callPollinationsAPI(messages, model = "p1") {
     try {
       console.log("calling pollinations api", messages, model);
       const response = await fetch(this.apiEndpoint, {
@@ -67,6 +68,7 @@ class AIService {
       }
 
     } catch (error) {
+      console.error("Error calling Pollinations API:", error);
       logger.error("Error calling Pollinations API", { 
         error: error.message,
         endpoint: this.apiEndpoint 
@@ -125,8 +127,7 @@ Classification Guidelines:
 
 Required Response Format:
 Action: [RESPOND or ARCHIVE]
-Reason: [Brief explanation of why this action was chosen]
-Draft Response: [If Action is RESPOND, provide a draft response]`;
+Reason: [Brief explanation of why this action was chosen]`
 
       const userMessage = `Available Historical Context:
 ${combinedContext}
@@ -148,6 +149,7 @@ ${email.body || ""}`;
       const response = await this.callPollinationsAPI(messages);
       return this.parseAIResponse(response.content);
     } catch (error) {
+      console.error("Error analyzing email:", error);
       logger.error("Error analyzing email", { error: error.message });
       throw error;
     }
@@ -157,26 +159,21 @@ ${email.body || ""}`;
     return this.composeEmailResponse(email);
   }
 
-  async refineResponse(originalEmail, originalResponse, userModification, editHistory = []) {
+  async refineResponse(originalEmail, originalResponse, userModification) {
     return this.composeEmailResponse(originalEmail, {}, userModification);
   }
 
   parseAIResponse(response) {
     try {
       const lines = response.split("\n").filter((line) => line.trim() !== "");
-      let action = "", reason = "", draftResponse = "";
-      let inDraftResponse = false;
+      let action = "";
+      let reason = "";
 
       for (const line of lines) {
         if (line.startsWith("Action:")) {
           action = "RESPOND"; //line.substring("Action:".length).trim();
         } else if (line.startsWith("Reason:")) {
           reason = line.substring("Reason:".length).trim();
-        } else if (line.startsWith("Draft Response:")) {
-          inDraftResponse = true;
-          draftResponse = line.substring("Draft Response:".length).trim();
-        } else if (inDraftResponse) {
-          draftResponse += "\n" + line;
         }
       }
 
@@ -187,49 +184,27 @@ ${email.body || ""}`;
 
       action = action.toUpperCase();
 
-      // If action is RESPOND but no draft response, generate a default one
-      if (action === "RESPOND" && !draftResponse.trim()) {
-        logger.warn("Missing draft response for RESPOND action, using default");
-        draftResponse = "I received your email and will review it shortly.";
-      }
-
-      // Normalize paragraph breaks only if there's a draft response
-      if (draftResponse) {
-        draftResponse = draftResponse
-          .replace(/\r\n/g, '\n')
-          .replace(/\r/g, '\n')
-          .replace(/\n{3,}/g, '\n\n')
-          .replace(/([^\n])\n([^\n])/g, '$1\n$2')
-          .replace(/([^.\n])\n\n([A-Z])/g, '$1\n\n$2')
-          .trim();
-      }
 
       return {
         action,
         reason,
-        draftResponse: action === "RESPOND" ? draftResponse : null,
       };
     } catch (error) {
+      console.error("Error parsing AI response:", error, response);
       logger.error("Error parsing AI response:", {
         error: error.message,
         rawResponse: response
       });
-      console.error(error, response);
       // Return a default response
       return {
         action: "RESPOND",
         reason: "Error parsing AI response",
-        draftResponse: "I received your email and will review it shortly.",
       };
     }
   }
 
-  // Add new method for prompt-based editing
-  async editResponseWithPrompt(email, originalResponse, editingPrompt) {
-    return this.composeEmailResponse(email, {}, editingPrompt);
-  }
 
-  async composeEmailResponse(email, context = {}, editingPrompt = null) {
+  async composeEmailResponse(email, context = {}) {
     try {
       const userData = await userService.getUserData();
       const combinedContext = this.loadContextFiles();
@@ -247,8 +222,6 @@ From: ${email.from}
 Date: ${new Date(parseInt(email.internalDate)).toLocaleString()}
 # Content 
 ${email.body}
-
-${editingPrompt ? `Editing Instructions:\n${editingPrompt}\n\nModify the response according to these instructions while maintaining appropriate tone and format.` : "Compose a new response that appropriately addresses this email."}
 
 Composition Guidelines:
 1. Write in the same language as the original email
@@ -274,6 +247,7 @@ Write a well-structured response with proper paragraph formatting.`;
       const response = await this.callPollinationsAPI(messages);
       return response.content.trim();
     } catch (error) {
+      console.error("Error composing email response:", error);
       logger.error("Error composing email response", { error: error.message });
       throw error;
     }

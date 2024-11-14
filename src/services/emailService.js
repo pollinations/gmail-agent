@@ -46,6 +46,7 @@ class EmailService {
 
       logger.info("Email service initialized successfully");
     } catch (error) {
+      console.error("Failed to initialize email service:", error);
       logger.error("Failed to initialize email service", {
         error: error.message,
         stack: error.stack,
@@ -111,11 +112,11 @@ class EmailService {
       await this.gmail.users.getProfile({ userId: "me" });
       logger.info("Gmail service initialized successfully");
     } catch (error) {
+      console.error("Failed to initialize Gmail service:", error);
       logger.error("Failed to initialize Gmail service", {
         error: error.message,
         stack: error.stack,
       });
-      console.error(error);
       throw error;
     }
   }

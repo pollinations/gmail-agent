@@ -38,6 +38,7 @@ class SummaryService {
       }
 
     } catch (error) {
+      console.error("Error calling Pollinations API:", error);
       logger.error("Error calling Pollinations API", { 
         error: error.message,
         endpoint: this.apiEndpoint 
@@ -68,6 +69,7 @@ class SummaryService {
 
       return this.formatSummaryResponse(summary, timeRange, emails.length);
     } catch (error) {
+      console.error("Error generating summary:", error);
       logger.error("Error generating summary", { error: error.message });
       return `Error generating summary: ${error.message}`;
     }

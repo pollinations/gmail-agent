@@ -11,7 +11,6 @@ class TelegramService {
   constructor() {
     this.bot = null;
     this.pendingConfirmations = new Map();
-    this.editingResponses = new Map();
     this.isProcessing = false;
     this.processLoop = null;
     this.autopilotMode = true;
@@ -51,6 +50,7 @@ class TelegramService {
 
       logger.info("Telegram bot initialized with scheduled summaries");
     } catch (error) {
+      console.error("Failed to initialize Telegram bot:", error);
       logger.error("Failed to initialize Telegram bot", {
         error: error.message,
       });
@@ -80,6 +80,7 @@ class TelegramService {
         },
       });
     } catch (error) {
+      console.error("Error handling summary command:", error);
       logger.error("Error handling summary command", { error: error.message });
       await this.sendErrorMessage(msg.chat.id);
     }
@@ -173,17 +174,6 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
       const userId = query.from.id.toString();
       const data = query.data;
 
-      // Add new callback handler for prompt-based editing
-      if (data === 'edit_with_prompt') {
-        const confirmationData = this.pendingConfirmations.get(userId);
-        if (!confirmationData) {
-          await this.bot.sendMessage(userId, "❌ No active email response to edit.");
-          return;
-        }
-        await this.initiatePromptEditing(userId, confirmationData);
-        return;
-      }
-
       // Verify user authorization
       if (userId !== config.telegram.userId) {
         logger.warn(`Unauthorized callback query from user ${userId}`);
@@ -233,42 +223,7 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
 
   async handleIncomingMessage(msg) {
     try {
-      const userId = msg.from.id.toString();
-      
-      // Check if we're in editing mode
-      if (this.editingResponses.has(userId)) {
-        const editingState = this.editingResponses.get(userId);
-        const confirmationData = editingState.data;
-        
-        if (editingState.type === 'prompt') {
-          // Handle prompt-based editing
-          const editedResponse = await aiService.editResponseWithPrompt(
-            confirmationData.email,
-            confirmationData.draftResponse,
-            msg.text
-          );
-          
-          // Update the draft response
-          confirmationData.draftResponse = editedResponse;
-          
-          // Show the edited version for confirmation
-          await this.sendConfirmation(
-            userId,
-            confirmationData.email,
-            {
-              action: "RESPOND",
-              reason: confirmationData.reason,
-              draftResponse: editedResponse,
-            }
-          );
-        } else {
-          // Handle full text editing (existing code)
-          // ... existing editing logic ...
-        }
-        
-        this.editingResponses.delete(userId);
-        return;
-      }
+      // const userId = msg.from.id.toString();
 
       // Only process messages from authorized user
       if (msg.from.id.toString() !== config.telegram.userId) {
@@ -297,20 +252,6 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
       // Handle bulk archive confirmation
       if (confirmationData.type === "bulkArchive") {
         await this.handleBulkArchive(msg.from.id, msg.text, confirmationData);
-        return;
-      }
-
-      const {
-        emailId,
-        action,
-        draftResponse,
-        originalEmail,
-        editHistory = [],
-      } = confirmationData;
-
-      // Handle editing mode
-      if (this.editingResponses.has(msg.from.id)) {
-        await this.handleEditingResponse(msg, confirmationData);
         return;
       }
 
@@ -354,42 +295,6 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
     }
   }
 
-  async handleEditingResponse(msg, confirmationData) {
-    try {
-      const {
-        emailId,
-        action,
-        draftResponse,
-        originalEmail,
-        editHistory = [],
-      } = confirmationData;
-
-      editHistory.push({
-        timestamp: new Date().toISOString(),
-        content: msg.text,
-      });
-
-      const refinedResponse = await aiService.refineResponse(
-        originalEmail,
-        draftResponse,
-        msg.text,
-        editHistory
-      );
-
-      confirmationData.draftResponse = refinedResponse;
-      confirmationData.editHistory = editHistory;
-
-      this.editingResponses.delete(msg.from.id);
-      await this.sendFinalConfirmationWithHistory(
-        msg.from.id,
-        confirmationData
-      );
-    } catch (error) {
-      logger.error("Error handling editing response", { error: error.message });
-      await this.sendErrorMessage(msg.from.id);
-    }
-  }
-
   async handleActionResponse(msg, confirmationData) {
     try {
       const { emailId, action, draftResponse, originalEmail } = confirmationData;
@@ -409,8 +314,6 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
 
         case "3":
           if (action === "RESPOND") {
-            await this.initiateEditing(msg.from.id, confirmationData);
-          } else {
             await this.handleForceReply(msg.from.id, confirmationData);
           }
           break;
@@ -456,11 +359,9 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
 
       switch (action) {
         case "RESPOND":
-          if (!draftResponse) {
-            logger.error("Missing draft response for RESPOND action");
-            await this.sendErrorMessage(userId);
-            break;
-          }
+          // Generate new response using the original email
+          const draftResponse = await aiService.composeEmailResponse(originalEmail);
+
           await emailService.createDraft(emailId, draftResponse);
           await this.bot.sendMessage(userId, "✅ Response saved as draft!");
           
@@ -516,7 +417,6 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
         action: confirmationData?.action,
       });
       await this.sendErrorMessage(userId);
-      // Clean up the pending confirmation on error
       this.pendingConfirmations.delete(userId);
     }
   }
@@ -557,62 +457,6 @@ Note: Summaries automatically run at scheduled times. Use /summary for an immedi
       .replace(/\&/g, "\\&");
   }
 
-  async sendEditHistory(userId, editHistory) {
-    let message = "*Edit History:*\n\n";
-    editHistory.forEach((edit, index) => {
-      const timestamp = new Date(edit.timestamp).toLocaleTimeString();
-      message += `Edit ${index + 1} (${timestamp}):\n${this.escapeSpecialChars(
-        edit.content
-      )}\n\n`;
-    });
-
-    await this.bot.sendMessage(userId, message, {
-      parse_mode: "Markdown",
-    });
-  }
-
-  async sendFinalConfirmationWithHistory(userId, confirmationData) {
-    try {
-      const { draftResponse, editHistory } = confirmationData;
-
-      let message = `
-📧 *Confirm Final Response*
-
-*Current Response:*
-${this.escapeSpecialChars(draftResponse)}
-
-${editHistory.length > 0 ? "\n*Edit History:*" : ""}
-${editHistory
-  .map((edit, index) => {
-    const timestamp = new Date(edit.timestamp).toLocaleTimeString();
-    return `\nEdit ${index + 1} (${timestamp}):\n${this.escapeSpecialChars(
-      edit.content
-    )}`;
-  })
-  .join("\n")}
-
-Reply with:
-1️⃣ to Confirm and Send
-2️⃣ to Cancel
-3️⃣ to Edit Again`;
-
-      await this.bot.sendMessage(userId, message, {
-        parse_mode: "Markdown",
-        reply_markup: {
-          keyboard: [["1", "2", "3"]],
-          one_time_keyboard: true,
-          resize_keyboard: true,
-        },
-      });
-    } catch (error) {
-      logger.error("Error sending final confirmation", {
-        error: error.message,
-        userId,
-      });
-      console.error(error);
-      await this.sendErrorMessage(userId);
-    }
-  }
 
   async sendConfirmation(userId, emailData, analysis) {
     try {
@@ -679,9 +523,8 @@ ${
 Reply with:
 1️⃣ to Confirm
 2️⃣ to Reject
-${analysis.action === "RESPOND" 
-  ? "3️⃣ to Edit Response\n4️⃣ to Force Archive\n5️⃣ to Mark as Read" 
-  : "3️⃣ to Force Reply\n4️⃣ to Mark as Read"}`;
+3️⃣ to Force Reply
+4️⃣ to Mark as Read"}`;
 
       const keyboard = analysis.action === "RESPOND" 
         ? [["1", "2", "3", "4", "5"]]
@@ -701,7 +544,6 @@ ${analysis.action === "RESPOND"
         action: analysis.action,
         draftResponse: analysis.draftResponse,
         originalEmail: emailData,
-        editHistory: [],
       });
 
       logger.info(`Confirmation request sent for email ${emailData.id}`);
@@ -946,62 +788,6 @@ Please provide your answer:`;
     }
   }
 
-  async initiateEditing(userId, confirmationData) {
-    try {
-      // Create a simpler message with properly escaped characters
-      const escapedResponse = this.escapeSpecialChars(
-        confirmationData.draftResponse || ""
-      );
-
-      const message = [
-        "📝 *Current Response:*",
-        "",
-        escapedResponse,
-        "",
-        "Please send your edited version\\.",
-      ].join("\n");
-
-      await this.bot.sendMessage(userId, message, {
-        parse_mode: "MarkdownV2",
-        reply_markup: {
-          force_reply: true,
-          remove_keyboard: true,
-        },
-      });
-
-      this.editingResponses.set(userId, true);
-    } catch (error) {
-      logger.error("Error initiating editing", {
-        error: error.message,
-        userId,
-        responseLength: confirmationData?.draftResponse?.length,
-      });
-      console.error(error);
-
-      // Send a plain text fallback if markdown fails
-      try {
-        await this.bot.sendMessage(
-          userId,
-          "📝 Current Response:\n\n" +
-            (confirmationData.draftResponse || "") +
-            "\n\nPlease send your edited version.",
-          {
-            reply_markup: {
-              force_reply: true,
-              remove_keyboard: true,
-            },
-          }
-        );
-        this.editingResponses.set(userId, true);
-      } catch (fallbackError) {
-        logger.error("Error sending fallback edit message", {
-          error: fallbackError.message,
-        });
-        await this.sendErrorMessage(userId);
-        this.editingResponses.delete(userId);
-      }
-    }
-  }
 
   async handleForceReply(userId, confirmationData) {
     try {
@@ -1253,26 +1039,6 @@ Please provide your answer:`;
     }
   }
 
-  async initiatePromptEditing(userId, confirmationData) {
-    try {
-      await this.bot.sendMessage(
-        userId,
-        "✨ Please provide your editing instructions.\n\nFor example:\n- Make it more formal\n- Add a thank you at the end\n- Remove the first paragraph\n- Make it shorter",
-        {
-          reply_markup: {
-            force_reply: true,
-            remove_keyboard: true,
-          },
-        }
-      );
-      this.editingResponses.set(userId, { type: 'prompt', data: confirmationData });
-    } catch (error) {
-      logger.error("Error initiating prompt editing", { error: error.message });
-      console.error(error);
-      await this.sendErrorMessage(userId);
-    }
-  }
-
   // Add new autopilot command handler
   async handleAutopilotCommand(msg) {
     try {
@@ -1284,7 +1050,6 @@ Please provide your answer:`;
 
       // Clean up any pending states
       this.pendingConfirmations.clear();
-      this.editingResponses.clear();
 
       this.autopilotMode = !this.autopilotMode; // Toggle autopilot mode
       
