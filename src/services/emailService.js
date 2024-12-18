@@ -152,10 +152,8 @@ class EmailService {
       // Get user data to check email addresses
       const userData = await userService.getUserData();
       const myEmails = userData.emails || [];
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      // Process each message and filter out recently replied threads
+      // Process each message and filter out threads where we have the last reply
       const processedEmails = await Promise.all(
         response.data.messages
           .filter((message) => !this.processedEmails.has(message.id))
@@ -167,36 +165,46 @@ class EmailService {
                 id: message.threadId,
               });
 
-              // Check if the last message in the thread is from us and recent
               const messages = thread.data.messages || [];
-              if (messages.length > 1) {
-                const lastMessage = messages[messages.length - 1];
-                const lastMessageFrom = lastMessage.payload.headers.find(
-                  h => h.name === "From"
-                )?.value || "";
-                const lastMessageDate = new Date(parseInt(lastMessage.internalDate));
+              if (messages.length === 0) return null;
 
-                // If last message is from us and within 7 days, skip this thread
-                if (
-                  myEmails.some(email => lastMessageFrom.toLowerCase().includes(email.toLowerCase())) &&
-                  lastMessageDate > sevenDaysAgo
-                ) {
-                  logger.info(`Skipping thread ${message.threadId} - recent reply from us`);
-                  return null;
-                }
+              // Get the last message in the thread
+              const lastMessage = messages[messages.length - 1];
+              const lastMessageFrom = lastMessage.payload.headers.find(
+                h => h.name === "From"
+              )?.value || "";
+
+              // Skip if the last message is from us
+              if (myEmails.some(email => 
+                lastMessageFrom.toLowerCase().includes(email.toLowerCase())
+              )) {
+                logger.info(`Skipping thread ${message.threadId} - last message is from us`);
+                return null;
               }
 
-              // Get the unread message details
+              // Only process if this message is the last unread message in the thread
+              const isLastUnreadMessage = messages
+                .slice(messages.indexOf(lastMessage))
+                .every(m => m.labelIds?.includes('UNREAD'));
+
+              if (!isLastUnreadMessage) {
+                logger.info(`Skipping message ${message.id} - not the last unread message in thread`);
+                return null;
+              }
+
+              // Get the message details
               const email = await this.gmail.users.messages.get({
                 userId: "me",
-                id: message.id,
+                id: lastMessage.id, // Use the last message ID instead
               });
+
               return this.parseEmail(email.data);
             } catch (error) {
+              console.error(`Error processing message ${message.id}:`, error);
               logger.error(`Error processing message ${message.id}`, {
                 error: error.message,
+                threadId: message.threadId
               });
-              console.error(error);
               return null;
             }
           })
@@ -208,6 +216,7 @@ class EmailService {
       logger.info(`Fetched ${this.currentEmailBatch.length} new unread emails from Primary category`);
       return this.currentEmailBatch;
     } catch (error) {
+      console.error("Failed to fetch unread emails:", error);
       logger.error("Failed to fetch unread emails", { error: error.message });
       throw error;
     }
@@ -680,6 +689,54 @@ class EmailService {
     return results;
   }
 
+  // Method declarations - no 'function' keyword needed
+  normalizeEmail(email) {
+    return email?.toLowerCase().trim() || '';
+  }
+
+  extractEmail(address) {
+    const match = address?.match(/<(.+?)>/) || address?.match(/([^\s]+@[^\s]+)/);
+    return match ? match[1].toLowerCase() : this.normalizeEmail(address);
+  }
+
+  getUniqueRecipients(from, to, cc) {
+    // Convert all addresses to Set for deduplication
+    const toSet = new Set([
+      this.extractEmail(from), // Original sender goes to To
+    ]);
+
+    // Process original To recipients
+    if (to) {
+      to.split(',').forEach(addr => {
+        const email = this.extractEmail(addr);
+        if (email && email !== this.extractEmail(from)) { // Don't add if it's the sender
+          toSet.add(email);
+        }
+      });
+    }
+
+    // Process CC recipients
+    const ccSet = new Set();
+    if (cc) {
+      cc.split(',').forEach(addr => {
+        const email = this.extractEmail(addr);
+        if (email && !toSet.has(email)) { // Only add to CC if not in To
+          ccSet.add(addr.trim());
+        }
+      });
+    }
+
+    // Add pollinations.ai to CC if not already in To
+    if (!toSet.has('hello@pollinations.ai')) {
+      ccSet.add('hello@pollinations.ai');
+    }
+
+    return {
+      to: Array.from(toSet).join(', '),
+      cc: Array.from(ccSet).join(', ')
+    };
+  }
+
   async sendResponse(emailId, response) {
     try {
       const email = await this.gmail.users.messages.get({
@@ -688,20 +745,25 @@ class EmailService {
       });
 
       const headers = email.data.payload.headers;
-      const to = headers.find((h) => h.name === "From")?.value;
+      const from = headers.find((h) => h.name === "From")?.value;
+      const to = headers.find((h) => h.name === "To")?.value;
+      const cc = headers.find((h) => h.name === "Cc")?.value;
       const subject = headers.find((h) => h.name === "Subject")?.value;
       const references = headers.find((h) => h.name === "Message-ID")?.value;
 
+      // Get deduplicated recipients
+      const recipients = this.getUniqueRecipients(from, to, cc);
+
       // Ensure response has proper line breaks
       const formattedResponse = response
-        .replace(/\r\n/g, '\n')  // Normalize line endings
-        .replace(/\n{3,}/g, '\n\n')  // Remove excess line breaks
+        .replace(/\r\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
 
       const message = [
         "From: me",
-        `To: ${to}`,
-        "Cc: hello@pollinations.ai", // Add CC to pollinations
+        `To: ${from}`, // Original sender
+        ...(recipients.cc ? [`Cc: ${recipients.cc}`] : []), // Only add Cc if there are CC recipients
         `Subject: Re: ${subject}`,
         `References: ${references}`,
         "Content-Type: text/plain; charset=utf-8",
@@ -710,8 +772,6 @@ class EmailService {
         formattedResponse,
       ].join("\n");
 
-      console.info("send response");
-      console.info(message);
       const encodedMessage = Buffer.from(message)
         .toString("base64")
         .replace(/\+/g, "-")
@@ -735,7 +795,6 @@ class EmailService {
         },
       });
 
-      // Add to processed emails set and remove from current batch
       this.processedEmails.add(emailId);
       this.currentEmailBatch = this.currentEmailBatch.filter(
         (email) => email.id !== emailId
@@ -744,6 +803,7 @@ class EmailService {
       logger.info(`Successfully sent response to email ${emailId} and marked as processed`);
       return true;
     } catch (error) {
+      console.error(`Failed to send response to email ${emailId}:`, error);
       logger.error(`Failed to send response to email ${emailId}`, {
         error: error.message,
       });
@@ -905,20 +965,25 @@ class EmailService {
       });
 
       const headers = email.data.payload.headers;
-      const to = headers.find((h) => h.name === "From")?.value;
+      const from = headers.find((h) => h.name === "From")?.value;
+      const to = headers.find((h) => h.name === "To")?.value;
+      const cc = headers.find((h) => h.name === "Cc")?.value;
       const subject = headers.find((h) => h.name === "Subject")?.value;
       const references = headers.find((h) => h.name === "Message-ID")?.value;
 
+      // Get deduplicated recipients
+      const recipients = this.getUniqueRecipients(from, to, cc);
+
       // Ensure response has proper line breaks
       const formattedResponse = response
-        .replace(/\r\n/g, '\n')  // Normalize line endings
-        .replace(/\n{3,}/g, '\n\n')  // Remove excess line breaks
+        .replace(/\r\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
 
       const message = [
         "From: me",
-        `To: ${to}`,
-        "Cc: hello@pollinations.ai", // Add CC to pollinations
+        `To: ${from}`, // Original sender
+        ...(recipients.cc ? [`Cc: ${recipients.cc}`] : []), // Only add Cc if there are CC recipients
         `Subject: Re: ${subject}`,
         `References: ${references}`,
         "Content-Type: text/plain; charset=utf-8",
@@ -933,7 +998,6 @@ class EmailService {
         .replace(/\//g, "_")
         .replace(/=+$/, "");
 
-      // Create draft instead of sending
       await this.gmail.users.drafts.create({
         userId: "me",
         requestBody: {
@@ -944,7 +1008,6 @@ class EmailService {
         },
       });
 
-      // Mark original email as read and processed
       await this.gmail.users.messages.modify({
         userId: "me",
         id: emailId,
@@ -953,7 +1016,6 @@ class EmailService {
         },
       });
 
-      // Add to processed emails set and remove from current batch
       this.processedEmails.add(emailId);
       this.currentEmailBatch = this.currentEmailBatch.filter(
         (email) => email.id !== emailId
@@ -962,10 +1024,10 @@ class EmailService {
       logger.info(`Successfully created draft response for email ${emailId} and marked as processed`);
       return true;
     } catch (error) {
+      console.error(`Failed to create draft response for email ${emailId}:`, error);
       logger.error(`Failed to create draft response for email ${emailId}`, {
         error: error.message,
       });
-      console.error(error);
       throw error;
     }
   }

@@ -36,7 +36,7 @@ class AIService {
     }
   }
 
-  async callPollinationsAPI(messages, model = "p1") {
+  async callPollinationsAPI(messages, model = "openai") {
     try {
       console.log("calling pollinations api", messages, model);
       const response = await fetch(this.apiEndpoint, {
@@ -96,38 +96,64 @@ Format your summary to clearly distinguish between:
     return this.callPollinationsAPI(messages);
   }
 
-  async analyzeEmail(email, isFollowUp = false) {
+  async analyzeEmail(email) {
     try {
       const userData = await userService.getUserData();
       const combinedContext = this.loadContextFiles();
+
+      // Check if email is marked as important
+      const isImportant = email.headers?.some(
+        header => header.name === "Importance" && header.value.toLowerCase() === "high"
+      ) || email.headers?.some(
+        header => header.name === "X-Priority" && ["1", "2"].includes(header.value)
+      );
 
       const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
 Analyze emails and determine if they need a response or can be archived.
 
 Classification Guidelines:
-1. ALWAYS ARCHIVE if the email is:
-   - An automated notification or alert
-   - A newsletter or marketing email
-   - A system-generated message
-   - A notification from a service
-   - A delivery status or tracking update
-   - A calendar invitation or update
-   - A subscription confirmation
-   - An automated receipt or invoice
-   - A social media notification
-   - A promotional offer
-   - A "no-reply" sender address
+1. ARCHIVE ONLY IF the email is clearly promotional or automated, such as:
+   - Marketing newsletters or promotional offers
+   - Automated notifications from services (e.g., "Your order has shipped")
+   - Social media notifications
+   - System-generated reports
+   - Bulk promotional emails
+   - "No-reply" automated messages
+   - Subscription confirmations or updates
 
-2. Consider RESPOND only if ALL these conditions are met:
+2. RESPOND if ANY of these conditions are met:
    - The email is from a real person (not automated)
-   - It contains a direct question or request requiring action
-   - It's a personal or business communication needing human interaction
-   - It's not part of an automated workflow
-   - It requires your specific input or decision
+   - Contains a direct question or request
+   - Requires your input, decision, or acknowledgment
+   - Is part of an ongoing conversation
+   - Contains important information that needs confirmation
+   - Is a personal or business communication
+   - Shows urgency or importance
+   - Mentions deadlines or time-sensitive matters
 
+When in doubt, choose RESPOND over ARCHIVE to avoid missing important communications.
+
+IMPORTANT:
+
+CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOTIONS OR SPONSORSHIP SHOULD BE ANSWERED WITH "NO".
+
+## STATUS
+----
+- WHENEVER POSSIBLE INVITE PEOPLE TO OUR DISCORD SERVER! https://discord.gg/k9F7SyTgqn
+- OUR API HAS NO AUTHENTICATION AND IS FREE!
+- DON'T ACCEPPT APPOINTMENTS
+----
+- WE OFFER FREE TEXT AND IMAGE GENERATION APIS.
+- 14.11.24
+- EVERYTHING WORKING NORMALLY
+- ALL SERVICES UP AND RUNNING!
+- IF CAROLINE IS IN THE THHREAD DONT RESPOND TO HER BUT THE OTHER PERSON
+----
+
+# RESPONSE FORMAT
 Required Response Format:
 Action: [RESPOND or ARCHIVE]
-Reason: [Brief explanation of why this action was chosen]`
+Reason: [Brief explanation of why this action was chosen]`;
 
       const userMessage = `Available Historical Context:
 ${combinedContext}
@@ -147,7 +173,22 @@ ${email.body || ""}`;
       ];
 
       const response = await this.callPollinationsAPI(messages);
-      return this.parseAIResponse(response.content);
+      const analysis = this.parseAIResponse(response.content);
+
+      // Force RESPOND action for important emails
+      if (isImportant && analysis.action === "ARCHIVE") {
+        console.info(`Forcing RESPOND action for important email: ${email.subject}`);
+        logger.info(`Forcing RESPOND action for important email`, {
+          emailId: email.id,
+          subject: email.subject,
+          originalAction: analysis.action
+        });
+        
+        analysis.action = "RESPOND";
+        analysis.reason = "Email marked as important - requires response";
+      }
+
+      return analysis;
     } catch (error) {
       console.error("Error analyzing email:", error);
       logger.error("Error analyzing email", { error: error.message });
@@ -171,7 +212,7 @@ ${email.body || ""}`;
 
       for (const line of lines) {
         if (line.startsWith("Action:")) {
-          action = "RESPOND"; //line.substring("Action:".length).trim();
+          action = line.substring("Action:".length).trim();
         } else if (line.startsWith("Reason:")) {
           reason = line.substring("Reason:".length).trim();
         }

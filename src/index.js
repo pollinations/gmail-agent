@@ -49,7 +49,7 @@ async function processEmail(email) {
   try {
     // Skip if email has been processed
     if (emailService.processedEmails.has(email.id)) {
-      logger.info(`Skipping already processed email ${email.id}`);
+      logger.info(`Skipping already processed email ${email.id} - Subject: "${email.subject}"`);
       return;
     }
 
@@ -69,12 +69,12 @@ async function processEmail(email) {
     await waitForUserResponse();
     logger.info(`User responded to email ${email.id}`);
   } catch (error) {
-    logger.error(error);
+    console.error(error);
     logger.error(`Error processing email ${email.id}`, {
       error: error.message,
       stack: error.stack,
+      subject: email.subject
     });
-    console.error(error);
   }
 }
 
@@ -87,10 +87,10 @@ async function processEmails() {
       await emailService.initialize();
       logger.info("Email service initialized");
     } catch (error) {
+      console.error("Failed to initialize email service:", error);
       logger.error("Failed to initialize email service", {
         error: error.message,
       });
-      console.error(error);
       throw error;
     }
 
@@ -98,10 +98,10 @@ async function processEmails() {
       await telegramService.initialize();
       logger.info("Telegram service initialized");
     } catch (error) {
+      console.error("Failed to initialize telegram service:", error);
       logger.error("Failed to initialize telegram service", {
         error: error.message,
       });
-      console.error(error);
       throw error;
     }
 
@@ -114,17 +114,17 @@ async function processEmails() {
       if (!emailService.processedEmails.has(email.id)) {
         await processEmail(email);
       } else {
-        logger.info(`Skipping already processed email ${email.id}`);
+        logger.info(`Skipping already processed email ${email.id} - Subject: "${email.subject}"`);
       }
     }
 
     logger.info("Finished processing all emails");
   } catch (error) {
+    console.error("Error in email processing cycle:", error);
     logger.error("Error in email processing cycle", {
       error: error.message,
       stack: error.stack,
     });
-    console.error(error);
 
     // If initialization failed, exit the process
     if (error.message.includes("Failed to initialize")) {

@@ -1,3 +1,8 @@
+IMPORTANT:
+
+CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOTIONS OR SPONSORSHIP SHOULD BE ANSWERED WITH "NO".
+
+
 About
 Pollinations is the platform for creating AI tech developing tools.
 Berlin, Berlin, Germany
