@@ -3,15 +3,15 @@ const logger = require("./utils/logger");
 const setupWizard = require("./utils/setupWizard");
 const setup = require("./utils/setup");
 const fs = require("fs");
+const cleanEmailThread = require('./utils/cleanEmailThread');
 
 // Move service requires inside functions to prevent early initialization
-let emailService, aiService, telegramService;
+let emailService, aiService;
 
 async function loadServices() {
   try {
     emailService = require("./services/emailService");
     aiService = require("./services/aiService");
-    telegramService = require("./services/telegramService");
     logger.info("Services loaded successfully");
   } catch (error) {
     logger.error("Error loading services", { error: error.message });
@@ -30,95 +30,124 @@ async function checkConfig() {
   return config;
 }
 
-
-async function processEmail(email) {
-  try {
-    // Skip if email has been processed
-    if (emailService.processedEmails.has(email.id)) {
-      logger.info(`Skipping already processed email ${email.id} - Subject: "${email.subject}"`);
-      return;
-    }
-
-    // Analyze email
-    logger.info(`Analyzing email ${email.id}`);
-    const analysis = await aiService.analyzeEmail(email);
-
-    // Send confirmation request
-    await telegramService.sendConfirmation(
-      config.telegram.userId,
-      email,
-      analysis
-    );
-
-    // Wait for user response before proceeding
-    // logger.info(`Waiting for user response for email ${email.id}`);
-    // await waitForUserResponse();
-    // logger.info(`User responded to email ${email.id}`);
-  } catch (error) {
-    console.error(error);
-    logger.error(`Error processing email ${email.id}`, {
-      error: error.message,
-      stack: error.stack,
-      subject: email.subject
-    });
-  }
-}
-
 async function processEmails() {
   try {
-    // Initialize services
-    logger.info("Initializing services...");
+    logger.info("Starting email fetch");
+    await loadServices();
+    
+    // Initialize Gmail service
+    await emailService.initialize();
+    logger.info("Email service initialized");
 
-    try {
-      await emailService.initialize();
-      logger.info("Email service initialized");
-    } catch (error) {
-      console.error("Failed to initialize email service:", error);
-      logger.error("Failed to initialize email service", {
-        error: error.message,
-      });
-      throw error;
-    }
+    // Fetch email threads
+    let threads = await emailService.fetchEmailThreads(500);
 
-    try {
-      await telegramService.initialize();
-      logger.info("Telegram service initialized");
-    } catch (error) {
-      console.error("Failed to initialize telegram service:", error);
-      logger.error("Failed to initialize telegram service", {
-        error: error.message,
-      });
-      throw error;
-    }
 
-    // Fetch unread emails
-    const emails = await emailService.fetchUnreadEmails();
-    logger.info(`Found ${emails.length} unread emails`);
+    logger.info(`Found ${threads.length} threads`);
 
-    // Process each email that hasn't been processed yet
-    for (const email of emails) {
-      if (!emailService.processedEmails.has(email.id)) {
-        console.log("should process email", email)
-        await processEmail(email);
-      } else {
-        logger.info(`Skipping already processed email ${email.id} - Subject: "${email.subject}"`);
+    // Deduplicate threads by threadId, keeping the first occurrence
+    const seenThreadIds = new Set();
+    let uniqueThreads = threads.filter(thread => {
+      if (seenThreadIds.has(thread.threadId)) {
+        return false;
+      }
+      seenThreadIds.add(thread.threadId);
+      return true;
+    });
+
+    logger.info(`After deduplication: ${uniqueThreads.length} unique threads`);
+    
+    // reverse threads
+    uniqueThreads = uniqueThreads.reverse();
+    
+    // Download full content for each thread
+    // const threadContents = [];
+
+    let allOpenAIMessages = []
+
+    for (const thread of uniqueThreads) {
+      if (thread) {
+
+        const content = await emailService.downloadThreadContent(thread.threadId);
+        if (!content.hasMyMessage && !content.needsReply) continue;
+
+        // console.log("thread content", content);
+        console.log(`\nProcessing thread ${thread.threadId}...`);
+        console.log(`Subject: ${content.subject}`);
+        // Pass just the messages array to cleanEmailThread
+        const cleanedMessages = cleanEmailThread(content.messages);
+  
+        // Create new thread object with cleaned messages
+        // const cleanedContent = {
+        //   ...content,
+        //   messages: cleanedMessages
+        // };
+        // threadContents.push(cleanedContent);
+        
+        let openAIMessages = [];
+        for (const message of cleanedMessages) {
+          const openAIMessage = {
+            "role": message.senderIsMe ? "assistant" : "user",
+            "content": formatAIMessageBody(message)
+          }
+          openAIMessages.push(openAIMessage);
+        }
+
+        if (content.needsReply) { 
+          const shouldReply = await aiService.analyzeEmail(openAIMessages);
+
+          allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
+          
+          console.log('----------------------------------------');
+          if (shouldReply) {
+            // console.log('Needs reply!!!', openAIMessages);
+            const reply = await aiService.respondToEmail(openAIMessages);
+            console.log('Reply:', reply);
+            
+            // Create a draft with the AI's response
+            const lastMessage = cleanedMessages[cleanedMessages.length - 1];
+            await emailService.createDraft(thread.threadId, {
+              to: lastMessage.from,
+              subject: lastMessage.subject,
+              messageId: lastMessage.messageId,
+              references: lastMessage.references,
+              body: reply
+            });
+
+            allOpenAIMessages.push({
+              "role": "assistant",
+              "content": reply
+            });
+            
+            // Mark the last message as read
+            await emailService.markMessageAsRead(content.messages[content.messages.length - 1].id);
+          }
+        } 
       }
     }
 
-    logger.info("Finished processing all emails");
-  } catch (error) {
-    console.error("Error in email processing cycle:", error);
-    logger.error("Error in email processing cycle", {
-      error: error.message,
-      stack: error.stack,
-    });
+    // Log summary of downloaded threads
+    logger.info(`Successfully downloaded ${allOpenAIMessages.length} threads`);
+    console.log('----------------------------------------');
 
-    // If initialization failed, exit the process
-    if (error.message.includes("Failed to initialize")) {
-      logger.error("Critical initialization error, exiting...");
-      throw error;
-    }
+
+    // fs.writeFileSync('emails_cleaned.json', JSON.stringify(threadContents, null, 2));
+    // return threadContents;
+  } catch (error) {
+    console.error("Error processing emails:", error);
+    logger.error("Error processing emails", { error: error.message });
   }
+}
+
+function formatAIMessageBody(message) {
+  return `
+Subject: ${message.subject}
+From: ${message.from}
+To: ${message.to}
+Date: ${message.date}
+
+${message.body}
+`;
 }
 
 async function main() {
@@ -134,31 +163,11 @@ async function main() {
     // Check and setup configuration
     await checkConfig();
 
-    // Load services after config is ready
-    await loadServices();
-
     // Start the email processing
-    logger.info("Starting email processing service");
-
-    // Run initial process
     await processEmails();
+    
+    process.exit(0);
 
-    // Set up interval for future checks
-    setInterval(async () => {
-      if (
-        !telegramService.pendingConfirmations.has(
-          parseInt(config.telegram.userId)
-        )
-      ) {
-        await processEmails();
-      }
-    }, 60 * 1000); // Reduced to 1 minute for more frequent checks
-
-    // Handle process termination
-    process.on("SIGINT", () => {
-      logger.info("Service shutting down");
-      process.exit(0);
-    });
   } catch (error) {
     logger.error("Failed to start service", {
       error: error.message,

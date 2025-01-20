@@ -136,91 +136,91 @@ class EmailService {
     });
   }
 
-  async fetchUnreadEmails() {
-    try {
-      const response = await this.gmail.users.messages.list({
-        userId: "me",
-        q: "is:unread category:primary",
-        maxResults: 500,
-      });
+  // async fetchUnreadEmails() {
+  //   try {
+  //     const response = await this.gmail.users.messages.list({
+  //       userId: "me",
+  //       q: "is:unread category:primary",
+  //       maxResults: 500,
+  //     });
 
-      if (!response.data.messages) {
-        logger.info("No unread messages found in Primary category");
-        return [];
-      }
+  //     if (!response.data.messages) {
+  //       logger.info("No unread messages found in Primary category");
+  //       return [];
+  //     }
 
-      // Get user data to check email addresses
-      const userData = await userService.getUserData();
-      const myEmails = userData.emails || [];
+  //     // Get user data to check email addresses
+  //     const userData = await userService.getUserData();
+  //     const myEmails = userData.emails || [];
 
-      // Process each message and filter out threads where we have the last reply
-      const processedEmails = await Promise.all(
-        response.data.messages
-          .filter((message) => !this.processedEmails.has(message.id))
-          .map(async (message) => {
-            try {
-              // Get the thread instead of just the message
-              const thread = await this.gmail.users.threads.get({
-                userId: "me",
-                id: message.threadId,
-              });
+  //     // Process each message and filter out threads where we have the last reply
+  //     const processedEmails = await Promise.all(
+  //       response.data.messages
+  //         .filter((message) => !this.processedEmails.has(message.id))
+  //         .map(async (message) => {
+  //           try {
+  //             // Get the thread instead of just the message
+  //             const thread = await this.gmail.users.threads.get({
+  //               userId: "me",
+  //               id: message.threadId,
+  //             });
 
-              const messages = thread.data.messages || [];
-              if (messages.length === 0) return null;
+  //             const messages = thread.data.messages || [];
+  //             if (messages.length === 0) return null;
 
-              // Get the last message in the thread
-              const lastMessage = messages[messages.length - 1];
-              const lastMessageFrom = lastMessage.payload.headers.find(
-                h => h.name === "From"
-              )?.value || "";
+  //             // Get the last message in the thread
+  //             const lastMessage = messages[messages.length - 1];
+  //             const lastMessageFrom = lastMessage.payload.headers.find(
+  //               (h) => h.name === "From"
+  //             )?.value || "";
 
-              // Skip if the last message is from us
-              if (myEmails.some(email => 
-                lastMessageFrom.toLowerCase().includes(email.toLowerCase())
-              )) {
-                logger.info(`Skipping thread ${message.threadId} - last message is from us`);
-                return null;
-              }
+  //             // Skip if the last message is from us
+  //             if (myEmails.some((email) =>
+  //               lastMessageFrom.toLowerCase().includes(email.toLowerCase())
+  //             )) {
+  //               logger.info(`Skipping thread ${message.threadId} - last message is from us`);
+  //               return null;
+  //             }
 
-              // Only process if this message is the last unread message in the thread
-              const isLastUnreadMessage = messages
-                .slice(messages.indexOf(lastMessage))
-                .every(m => m.labelIds?.includes('UNREAD'));
+  //             // Only process if this message is the last unread message in the thread
+  //             const isLastUnreadMessage = messages
+  //               .slice(messages.indexOf(lastMessage))
+  //               .every((m) => m.labelIds?.includes("UNREAD"));
 
-              if (!isLastUnreadMessage) {
-                logger.info(`Skipping message ${message.id} - not the last unread message in thread`);
-                return null;
-              }
+  //             if (!isLastUnreadMessage) {
+  //               logger.info(`Skipping message ${message.id} - not the last unread message in thread`);
+  //               return null;
+  //             }
 
-              // Get the message details
-              const email = await this.gmail.users.messages.get({
-                userId: "me",
-                id: lastMessage.id, // Use the last message ID instead
-              });
+  //             // Get the message details
+  //             const email = await this.gmail.users.messages.get({
+  //               userId: "me",
+  //               id: lastMessage.id, // Use the last message ID instead
+  //             });
 
-              return this.parseEmail(email.data);
-            } catch (error) {
-              console.error(`Error processing message ${message.id}:`, error);
-              logger.error(`Error processing message ${message.id}`, {
-                error: error.message,
-                threadId: message.threadId
-              });
-              return null;
-            }
-          })
-      );
+  //             return this.parseEmail(email.data);
+  //           } catch (error) {
+  //             console.error(`Error processing message ${message.id}:`, error);
+  //             logger.error(`Error processing message ${message.id}`, {
+  //               error: error.message,
+  //               threadId: message.threadId,
+  //             });
+  //             return null;
+  //           }
+  //         })
+  //     );
 
-      // Filter out null results and store in currentEmailBatch
-      this.currentEmailBatch = processedEmails.filter(email => email !== null);
+  //     // Filter out null results and store in currentEmailBatch
+  //     this.currentEmailBatch = processedEmails.filter((email) => email !== null);
 
-      logger.info(`Fetched ${this.currentEmailBatch.length} new unread emails from Primary category`);
-      return this.currentEmailBatch;
-    } catch (error) {
-      console.error("Failed to fetch unread emails:", error);
-      logger.error("Failed to fetch unread emails", { error: error.message });
-      throw error;
-    }
-  }
+  //     logger.info(`Fetched ${this.currentEmailBatch.length} new unread emails from Primary category`);
+  //     return this.currentEmailBatch;
+  //   } catch (error) {
+  //     console.error("Failed to fetch unread emails:", error);
+  //     logger.error("Failed to fetch unread emails", { error: error.message });
+  //     throw error;
+  //   }
+  // }
 
   prepareTextForEmbedding(email) {
     try {
@@ -245,256 +245,6 @@ class EmailService {
         emailId: email?.id,
       });
       return null;
-    }
-  }
-
-  async getEmailEmbedding(email) {
-    try {
-      if (!this.embeddings) return null;
-
-      // Check cache first
-      if (this.emailEmbeddings.has(email.id)) {
-        return this.emailEmbeddings.get(email.id);
-      }
-
-      // Prepare text for embedding
-      const tokens = encode(`${email.subject} ${email.from} ${email.body}`);
-      const limitedTokens = tokens.slice(0, 1000); // Limit to first 1000 tokens
-      const text = decode(limitedTokens);
-
-      // Get embedding with timeout
-      const embedding = await Promise.race([
-        this.embeddings.embedQuery(text),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Embedding timeout")), 5000)
-        ),
-      ]);
-
-      if (Array.isArray(embedding) && embedding.length > 0) {
-        this.emailEmbeddings.set(email.id, embedding);
-        return embedding;
-      }
-
-      return null;
-    } catch (error) {
-      logger.error("Error generating embedding", {
-        error: error.message,
-        emailId: email?.id,
-      });
-      return null;
-    }
-  }
-
-  async findSimilarEmails(sourceEmail) {
-    try {
-      if (!sourceEmail?.id) return [];
-
-      // Get unprocessed emails
-      const unprocessedEmails = this.currentEmailBatch.filter(
-        (email) =>
-          !this.processedEmails.has(email.id) && email.id !== sourceEmail.id
-      );
-
-      if (unprocessedEmails.length === 0) return [];
-
-      // Quick pre-filter using signatures
-      const sourceSignature = this.getEmailSignature(sourceEmail);
-      const quickMatches = unprocessedEmails.filter((email) => {
-        // Must be from same sender
-        if (email.from !== sourceEmail.from) return false;
-
-        // Quick signature comparison
-        const signature = this.getEmailSignature(email);
-        return signature === sourceSignature;
-      });
-
-      // If no quick matches, do basic filtering
-      if (quickMatches.length === 0) {
-        return this.preFilterEmails(sourceEmail, unprocessedEmails);
-      }
-
-      // If we have embeddings, use them for the quick matches
-      if (this.embeddings) {
-        try {
-          // Get source embedding (with cache)
-          const sourceEmbedding = await this.getEmailEmbedding(sourceEmail);
-          if (!sourceEmbedding) {
-            return quickMatches;
-          }
-
-          // Process matches in parallel with a smaller batch size
-          const batchSize = 5;
-          const similarEmails = [];
-
-          // Process in batches
-          for (let i = 0; i < quickMatches.length; i += batchSize) {
-            const batch = quickMatches.slice(i, i + batchSize);
-            const batchResults = await Promise.all(
-              batch.map(async (email) => {
-                try {
-                  const embedding = await this.getEmailEmbedding(email);
-                  if (!embedding) return null;
-
-                  const similarity = this.cosineSimilarity(
-                    sourceEmbedding,
-                    embedding
-                  );
-                  return { email, similarity };
-                } catch {
-                  return null;
-                }
-              })
-            );
-
-            // Add successful results to similar emails
-            similarEmails.push(
-              ...batchResults
-                .filter(
-                  (result) =>
-                    result && result.similarity > this.similarityThreshold
-                )
-                .map((result) => result.email)
-            );
-
-            // If we have enough similar emails, stop processing
-            if (similarEmails.length >= 100) break;
-          }
-
-          logger.info(
-            `Found ${similarEmails.length} similar emails using embeddings`
-          );
-          return similarEmails;
-        } catch (embeddingError) {
-          logger.error("Error using embeddings", {
-            error: embeddingError.message,
-          });
-          return quickMatches;
-        }
-      }
-
-      return quickMatches;
-    } catch (error) {
-      logger.error("Error finding similar emails", {
-        error: error.message,
-        sourceEmailId: sourceEmail?.id,
-      });
-      return [];
-    }
-  }
-
-  preFilterEmails(sourceEmail, emails) {
-    try {
-      // Quick filtering based on basic criteria
-      const matches = emails.filter((email) => {
-        try {
-          // Must have same sender
-          if (email.from !== sourceEmail.from) {
-            return false;
-          }
-
-          // Check subject similarity
-          const subjectMatch = this.areSubjectsSimilar(
-            email.subject,
-            sourceEmail.subject
-          );
-          if (!subjectMatch) {
-            return false;
-          }
-
-          // Check for similar format (optional)
-          const formatMatch = this.hasSimilarFormat(
-            email.body,
-            sourceEmail.body
-          );
-
-          // Check for unsubscribe links (optional)
-          const bothHaveUnsubscribe =
-            this.hasUnsubscribeLink(email.body) &&
-            this.hasUnsubscribeLink(sourceEmail.body);
-
-          // Return true if either format matches or both have unsubscribe links
-          return formatMatch || bothHaveUnsubscribe;
-        } catch (error) {
-          logger.error("Error comparing emails", {
-            error: error.message,
-            emailId: email?.id,
-          });
-          return false;
-        }
-      });
-
-      logger.info(`Pre-filter found ${matches.length} potential matches`);
-      return matches;
-    } catch (error) {
-      logger.error("Error in preFilterEmails", { error: error.message });
-      return [];
-    }
-  }
-
-  areSubjectsSimilar(subject1, subject2) {
-    try {
-      if (!subject1 || !subject2) return false;
-
-      // Clean and normalize subjects
-      const cleanSubject = (subject) => {
-        return subject
-          .toLowerCase()
-          .replace(/\d+/g, "") // Remove numbers
-          .replace(/[^\w\s]/g, "") // Remove special chars
-          .replace(/fw|fwd|re/g, "") // Remove forward/reply prefixes
-          .trim();
-      };
-
-      const clean1 = cleanSubject(subject1);
-      const clean2 = cleanSubject(subject2);
-
-      // Check for exact match after cleaning
-      if (clean1 === clean2) return true;
-
-      // Check if one is contained in the other
-      if (clean1.includes(clean2) || clean2.includes(clean1)) return true;
-
-      // Split into words and check for significant word overlap
-      const words1 = new Set(clean1.split(/\s+/));
-      const words2 = new Set(clean2.split(/\s+/));
-
-      // Calculate word overlap
-      const commonWords = [...words1].filter((word) => words2.has(word));
-      const overlapRatio =
-        commonWords.length / Math.max(words1.size, words2.size);
-
-      return overlapRatio > 0.5; // Require 50% word overlap
-    } catch (error) {
-      logger.error("Error comparing subjects", { error: error.message });
-      return false;
-    }
-  }
-
-  cosineSimilarity(vecA, vecB) {
-    try {
-      if (
-        !Array.isArray(vecA) ||
-        !Array.isArray(vecB) ||
-        vecA.length !== vecB.length
-      ) {
-        throw new Error("Invalid vectors for similarity calculation");
-      }
-
-      const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-      const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-      const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-
-      if (magnitudeA === 0 || magnitudeB === 0) {
-        return 0;
-      }
-
-      const similarity = dotProduct / (magnitudeA * magnitudeB);
-      return isNaN(similarity) ? 0 : similarity;
-    } catch (error) {
-      logger.error("Error calculating cosine similarity", {
-        error: error.message,
-      });
-      return 0;
     }
   }
 
@@ -560,8 +310,8 @@ class EmailService {
         // Remove quoted text
         .replace(/^>.*$/gm, "")
         .replace(/^On.*wrote:$/gm, "")
-        // Remove excessive whitespace
-        .replace(/\s+/g, " ")
+        // Remove horizontal whitespace while preserving newlines
+        .replace(/[^\S\n]+/g, " ")
         // Remove empty lines
         .replace(/^\s*[\r\n]/gm, "\n")
         // Normalize line endings
@@ -571,7 +321,7 @@ class EmailService {
         // Remove common footer patterns
         .replace(/^Disclaimer:.*$/m, "")
         .replace(/^Confidentiality notice:.*$/m, "")
-        // Clean up multiple newlines
+        // Clean up multiple newlines (keep max 2)
         .replace(/\n{3,}/g, "\n\n")
         // Trim whitespace
         .trim()
@@ -580,64 +330,32 @@ class EmailService {
 
   parseEmail(emailData) {
     try {
-      // Extract headers
       const headers = emailData.payload.headers;
-      const subject = headers.find((h) => h.name === "Subject")?.value;
-      const from = headers.find((h) => h.name === "From")?.value;
+      const from = headers.find((h) => h.name === "From")?.value || "";
+      const to = headers.find((h) => h.name === "To")?.value || "";
+      const subject = headers.find((h) => h.name === "Subject")?.value || "";
+      const date = headers.find((h) => h.name === "Date")?.value || "";
+      const messageId = headers.find((h) => h.name === "Message-ID")?.value || "";
 
-      // Extract body
-      let body = "";
-
-      // Function to recursively extract text from parts
-      const extractText = (part) => {
-        let text = "";
-
-        if (
-          part.mimeType &&
-          part.mimeType.startsWith("text/") &&
-          part.body?.data
-        ) {
-          const decodedText = Buffer.from(part.body.data, "base64").toString();
-          text +=
-            part.mimeType === "text/html"
-              ? this.cleanHtml(decodedText)
-              : decodedText;
-        }
-
-        if (part.parts) {
-          for (const subPart of part.parts) {
-            text += extractText(subPart);
-          }
-        }
-
-        if (part.mimeType === "message/rfc822" && part.body.attachmentId) {
-          const attachedMessage = part.parts?.[0];
-          if (attachedMessage) {
-            text += extractText(attachedMessage);
-          }
-        }
-
-        return text;
-      };
-
-      // Process the email body starting from the root payload
-      body = extractText(emailData.payload);
-
-      // Clean up the body text
-      body = this.cleanEmailBody(body);
+      // Extract body content
+      const body = this.extractText(emailData.payload);
 
       return {
         id: emailData.id,
         threadId: emailData.threadId,
-        subject,
         from,
+        to,
+        subject,
+        date,
+        messageId,
         body,
+        snippet: emailData.snippet,
         internalDate: emailData.internalDate,
-        headers: emailData.payload.headers,
+        headers: emailData.payload.headers
       };
     } catch (error) {
-      logger.error("Failed to parse email", { error: error.message });
-      throw error;
+      logger.error("Error parsing email", { error: error.message });
+      return null;
     }
   }
 
@@ -691,7 +409,7 @@ class EmailService {
 
   // Method declarations - no 'function' keyword needed
   normalizeEmail(email) {
-    return email?.toLowerCase().trim() || '';
+    return email?.toLowerCase().trim() || "";
   }
 
   extractEmail(address) {
@@ -707,9 +425,10 @@ class EmailService {
 
     // Process original To recipients
     if (to) {
-      to.split(',').forEach(addr => {
+      to.split(",").forEach((addr) => {
         const email = this.extractEmail(addr);
-        if (email && email !== this.extractEmail(from)) { // Don't add if it's the sender
+        if (email && email !== this.extractEmail(from)) {
+          // Don't add if it's the sender
           toSet.add(email);
         }
       });
@@ -718,22 +437,23 @@ class EmailService {
     // Process CC recipients
     const ccSet = new Set();
     if (cc) {
-      cc.split(',').forEach(addr => {
+      cc.split(",").forEach((addr) => {
         const email = this.extractEmail(addr);
-        if (email && !toSet.has(email)) { // Only add to CC if not in To
+        if (email && !toSet.has(email)) {
+          // Only add to CC if not in To
           ccSet.add(addr.trim());
         }
       });
     }
 
     // Add pollinations.ai to CC if not already in To
-    if (!toSet.has('hello@pollinations.ai')) {
-      ccSet.add('hello@pollinations.ai');
+    if (!toSet.has("hello@pollinations.ai")) {
+      ccSet.add("hello@pollinations.ai");
     }
 
     return {
-      to: Array.from(toSet).join(', '),
-      cc: Array.from(ccSet).join(', ')
+      to: Array.from(toSet).join(", "),
+      cc: Array.from(ccSet).join(", "),
     };
   }
 
@@ -756,8 +476,8 @@ class EmailService {
 
       // Ensure response has proper line breaks
       const formattedResponse = response
-        .replace(/\r\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
+        .replace(/\r\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
         .trim();
 
       const message = [
@@ -957,82 +677,250 @@ class EmailService {
     }
   }
 
-  async createDraft(emailId, response) {
+  async createDraft(threadId, message) {
     try {
-      const email = await this.gmail.users.messages.get({
-        userId: "me",
-        id: emailId,
-      });
+      // If message is a string, treat it as a simple response
+      if (typeof message === 'string') {
+        const thread = await this.gmail.users.threads.get({
+          userId: 'me',
+          id: threadId
+        });
+        
+        const lastMessage = thread.data.messages[thread.data.messages.length - 1];
+        const headers = lastMessage.payload.headers;
+        const from = headers.find(h => h.name === 'From')?.value;
+        const to = headers.find(h => h.name === 'To')?.value;
+        const cc = headers.find(h => h.name === 'Cc')?.value;
+        const subject = headers.find(h => h.name === 'Subject')?.value;
+        const references = headers.find(h => h.name === 'Message-ID')?.value;
 
-      const headers = email.data.payload.headers;
-      const from = headers.find((h) => h.name === "From")?.value;
-      const to = headers.find((h) => h.name === "To")?.value;
-      const cc = headers.find((h) => h.name === "Cc")?.value;
-      const subject = headers.find((h) => h.name === "Subject")?.value;
-      const references = headers.find((h) => h.name === "Message-ID")?.value;
+        // Get deduplicated recipients
+        const recipients = this.getUniqueRecipients(from, to, cc);
 
-      // Get deduplicated recipients
-      const recipients = this.getUniqueRecipients(from, to, cc);
+        message = {
+          to: from,
+          cc: recipients.cc,
+          subject,
+          messageId: references,
+          body: message
+        };
+      }
 
-      // Ensure response has proper line breaks
-      const formattedResponse = response
+      // Ensure message body has proper line breaks
+      const formattedBody = message.body
         .replace(/\r\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 
-      const message = [
-        "From: me",
-        `To: ${from}`, // Original sender
-        ...(recipients.cc ? [`Cc: ${recipients.cc}`] : []), // Only add Cc if there are CC recipients
-        `Subject: Re: ${subject}`,
-        `References: ${references}`,
-        "Content-Type: text/plain; charset=utf-8",
-        "MIME-Version: 1.0",
-        "",
-        formattedResponse,
-      ].join("\n");
-
-      const encodedMessage = Buffer.from(message)
-        .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/, "");
-
-      await this.gmail.users.drafts.create({
-        userId: "me",
+      const draft = await this.gmail.users.drafts.create({
+        userId: 'me',
         requestBody: {
           message: {
-            raw: encodedMessage,
-            threadId: email.data.threadId,
-          },
-        },
+            threadId,
+            raw: Buffer.from(
+              `From: me\n` +
+              `To: ${message.to}\n` +
+              (message.cc ? `Cc: ${message.cc}\n` : '') +
+              `Subject: Re: ${message.subject}\n` +
+              `In-Reply-To: ${message.messageId}\n` +
+              `References: ${message.references ? message.references + ' ' : ''}${message.messageId}\n` +
+              `Content-Type: text/plain; charset=utf-8\n\n` +
+              `${formattedBody}`
+            ).toString('base64')
+              .replace(/\+/g, '-')
+              .replace(/\//g, '_')
+              .replace(/=+$/, '')
+          }
+        }
       });
+      
+      logger.info('Draft created successfully', { threadId });
+      return draft.data;
+    } catch (error) {
+      logger.error('Error creating draft', { error: error.message, threadId });
+      throw error;
+    }
+  }
 
+  async markMessageAsRead(messageId) {
+    try {
       await this.gmail.users.messages.modify({
-        userId: "me",
-        id: emailId,
+        userId: 'me',
+        id: messageId,
         requestBody: {
-          removeLabelIds: ["UNREAD"],
-        },
+          removeLabelIds: ['UNREAD']
+        }
+      });
+      logger.info('Message marked as read', { messageId });
+    } catch (error) {
+      logger.error('Error marking message as read', { error: error.message, messageId });
+      throw error;
+    }
+  }
+
+  async fetchEmailThreads(maxResults = 100) {
+    try {
+      // List all email threads from primary category
+      const response = await this.gmail.users.messages.list({
+        userId: "me",
+        q: "category:primary",  // Simple query to get all primary emails
+        maxResults: maxResults,
       });
 
-      this.processedEmails.add(emailId);
-      this.currentEmailBatch = this.currentEmailBatch.filter(
-        (email) => email.id !== emailId
+      if (!response.data.messages) {
+        logger.info("No messages found in Primary category");
+        return [];
+      }
+
+      logger.info(`Found ${response.data.messages.length} messages, fetching thread details...`);
+
+      // Process each thread
+      const processedThreads = await Promise.all(
+        response.data.messages.map(async (message) => {
+          try {
+            // Get the full thread
+            const thread = await this.gmail.users.threads.get({
+              userId: "me",
+              id: message.threadId,
+            });
+
+            if (!thread.data.messages || thread.data.messages.length === 0) {
+              return null;
+            }
+
+            // Parse all messages in the thread
+            const messages = await Promise.all(
+              thread.data.messages.map(async (msg) => {
+                const email = await this.gmail.users.messages.get({
+                  userId: "me",
+                  id: msg.id,
+                });
+                return this.parseEmail(email.data);
+              })
+            );
+
+            // Return thread info along with all messages
+            return {
+              threadId: thread.data.id,
+              messages: messages,
+              snippet: thread.data.snippet,
+              historyId: thread.data.historyId
+            };
+          } catch (error) {
+            console.error(`Error processing thread ${message.threadId}:`, error);
+            logger.error(`Error processing thread ${message.threadId}`, {
+              error: error.message,
+              stack: error.stack
+            });
+            return null;
+          }
+        })
       );
 
-      logger.info(`Successfully created draft response for email ${emailId} and marked as processed`);
-      return true;
+      // Filter out null results
+      const validThreads = processedThreads.filter(thread => thread !== null);
+      
+      logger.info(`Successfully processed ${validThreads.length} email threads`);
+      return validThreads;
     } catch (error) {
-      console.error(`Failed to create draft response for email ${emailId}:`, error);
-      logger.error(`Failed to create draft response for email ${emailId}`, {
+      console.error("Failed to fetch email threads:", error);
+      logger.error("Failed to fetch email threads", { 
         error: error.message,
+        stack: error.stack 
       });
       throw error;
     }
   }
 
-  // Add new method for applying ToArchive label
+  async downloadThreadContent(threadId) {
+    try {
+      // Get the full thread
+      const thread = await this.gmail.users.threads.get({
+        userId: "me",
+        id: threadId,
+      });
+
+      if (!thread.data.messages || thread.data.messages.length === 0) {
+        return null;
+      }
+
+      // Get user data to check email addresses
+      const userData = await userService.getUserData();
+      const myEmails = userData.emails || [];
+
+      // Process all messages in the thread
+      const messages = await Promise.all(
+        thread.data.messages.map(async (message) => {
+          const email = await this.gmail.users.messages.get({
+            userId: "me",
+            id: message.id,
+          });
+          const parsed = this.parseEmail(email.data);
+          return {
+            ...parsed,
+            labelIds: email.data.labelIds || [],
+            senderIsMe: myEmails.some(email => 
+              parsed.from.toLowerCase().includes(email.toLowerCase())
+            )
+          };
+        })
+      );
+
+      // Get subject from the first message
+      const subject = messages[0]?.subject || "";
+
+      // Check if last message is unread - indicates we might need to reply
+      const lastMessage = messages[messages.length - 1];
+      const needsReply = lastMessage?.labelIds?.includes('UNREAD') || false;
+
+      // Check if any message is from the user
+      const hasMyMessage = messages.some(msg => 
+        myEmails.some(email => 
+          msg.from.toLowerCase().includes(email.toLowerCase())
+        )
+      );
+
+      return {
+        threadId,
+        subject,
+        messages,
+        needsReply,
+        hasMyMessage
+      };
+    } catch (error) {
+      console.error(`Error downloading thread ${threadId}:`, error);
+      logger.error(`Error downloading thread ${threadId}`, {
+        error: error.message,
+      });
+      return null;
+    }
+  }
+
+  extractText(part) {
+    let text = "";
+
+    if (part.mimeType && part.mimeType.startsWith("text/") && part.body?.data) {
+      const decodedText = Buffer.from(part.body.data, "base64").toString();
+      text += part.mimeType === "text/html" ? this.cleanHtml(decodedText) : decodedText;
+    }
+
+    if (part.parts) {
+      for (const subPart of part.parts) {
+        text += this.extractText(subPart);
+        if (subPart.mimeType === "text/plain") break;
+      }
+    }
+
+    if (part.mimeType === "message/rfc822" && part.body.attachmentId) {
+      const attachedMessage = part.parts?.[0];
+      if (attachedMessage) {
+        text += this.extractText(attachedMessage);
+      }
+    }
+
+    return this.cleanEmailBody(text);
+  }
+
   async applyToArchiveLabel(emailId) {
     try {
       // Get the correct label ID
@@ -1063,7 +951,7 @@ class EmailService {
         error: error.message,
       });
       console.error(error);
-      throw error; 
+      throw error;
     }
   }
 

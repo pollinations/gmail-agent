@@ -37,9 +37,9 @@ class AIService {
     }
   }
 
-  async callPollinationsAPI(messages, model = "deepseek") {
+  async callPollinationsAPI(messages, model = "claude-email") {
     try {
-      console.log("calling pollinations api", messages, model);
+      console.log("calling pollinations api", messages.length, model, "last message", messages[messages.length - 1]);
       const response = await fetch(this.apiEndpoint, {
         method: 'POST',
         headers: {
@@ -53,16 +53,29 @@ class AIService {
       });
 
       if (!response.ok) {
+        // log whole response body
+        console.error("API call failed:", await response.text());
         throw new Error(`API call failed: ${response.statusText}`);
       }
 
       // Add error handling for text response
       const text = await response.text();
-      console.log("received response", text);
       try {
         // Try to parse as JSON first
         const data = JSON.parse(text);
-        return {role: "assistant", content: data.choices?.[0]?.message?.content?.trim() || text};
+        console.log("usage", data.usage);
+        this.lastUsage = data.usage;
+        
+        // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
+        if (data.usage.prompt_tokens > 80000 && messages.length > 1) {
+          const messagesToRemove = Math.ceil(messages.length * 0.1); // Calculate 10% of messages
+          messages.splice(0, messagesToRemove); // Remove first 10% of messages
+          console.log(`Removed ${messagesToRemove} messages due to high token count`);
+        }
+        
+        const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
+        // console.log("received response", textResponse);
+        return {role: "assistant", content: textResponse};
       } catch (e) {
         // If not JSON, return the raw text
         return {role: "assistant", content: text.trim()} ;
@@ -78,42 +91,16 @@ class AIService {
     }
   }
 
-  async summarizeThread(email) {
-    const systemMessage = `Analyze and summarize this email thread, with special emphasis on the most recent messages. 
-Provide a concise summary (max 3 lines) that:
-1. Identifies the most recent development or latest request (HIGHEST PRIORITY)
-2. Provides essential context from earlier messages (if relevant)
-3. Highlights any pending actions or time-sensitive matters
-
-Format your summary to clearly distinguish between:
-- LATEST: [Most recent email's key points]
-- CONTEXT: [Brief relevant history if needed]`;
-
-    const messages = [
-      { role: "system", content: systemMessage },
-      { role: "user", content: `Subject: ${email.subject}\nFrom: ${email.from}\n# Content\n${email.body}` }
-    ];
-
-    return this.callPollinationsAPI(messages);
-  }
-
-  async analyzeEmail(email) {
+  async analyzeEmail(threadMessages) {
     try {
       const userData = await userService.getUserData();
-      const combinedContext = this.loadContextFiles();
-
-      // Check if email is marked as important
-      const isImportant = email.headers?.some(
-        header => header.name === "Importance" && header.value.toLowerCase() === "high"
-      ) || email.headers?.some(
-        header => header.name === "X-Priority" && ["1", "2"].includes(header.value)
-      );
+      // const combinedContext = this.loadContextFiles();
 
       const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
-Analyze emails and determine if they need a response or can be archived.
+Analyze this email thread and determine if it needs a response.
 
 Classification Guidelines:
-1. ARCHIVE ONLY IF the email is clearly promotional or automated, such as:
+1. Return FALSE if the email thread is clearly promotional or automated, such as:
    - Marketing newsletters or promotional offers
    - Automated notifications from services (e.g., "Your order has shipped")
    - Social media notifications
@@ -122,7 +109,7 @@ Classification Guidelines:
    - "No-reply" automated messages
    - Subscription confirmations or updates
 
-2. RESPOND if ANY of these conditions are met:
+2. Return TRUE if ANY of these conditions are met:
    - The email is from a real person (not automated)
    - Contains a direct question or request
    - Requires your input, decision, or acknowledgment
@@ -132,7 +119,43 @@ Classification Guidelines:
    - Shows urgency or importance
    - Mentions deadlines or time-sensitive matters
 
-When in doubt, choose RESPOND over ARCHIVE to avoid missing important communications.
+When in doubt, return TRUE to avoid missing important communications.
+
+RESPONSE FORMAT:
+Return ONLY the word TRUE or FALSE`;
+
+      const messages = [{ "role": "system", "content": systemMessage }, ...threadMessages];
+      const response = await this.callPollinationsAPI(messages);
+      const shouldReply = response.content.trim().toUpperCase() === 'TRUE';
+      console.log("shouldReply", shouldReply);
+      return shouldReply;
+    } catch (error) {
+      console.error("Error analyzing email:", error);
+      logger.error("Error analyzing email", { error: error.message });
+      throw error;
+    }
+  }
+
+  async respondToEmail(threadMessages) {
+    try {
+      const userData = await userService.getUserData();
+
+      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
+Write a response to this email thread.
+
+Composition Guidelines:
+1. Write in the same language as the original email
+2. Match the formality level of the original email
+3. Structure the response with proper paragraphs (use \n\n between paragraphs)
+4. Be concise yet thorough
+5. Address all points from the original email
+6. Maintain professional tone while being personable
+7. Format with proper spacing:
+   - Use double line breaks between paragraphs
+   - Separate greeting and signature with double line breaks
+   - Keep paragraphs logically grouped
+8. Write in the first person.
+9. Be concise and to the point. Avoid being too positive and marketing-like.
 
 IMPORTANT:
 
@@ -151,58 +174,36 @@ CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOT
 - IF CAROLINE IS IN THE THHREAD DONT RESPOND TO HER BUT THE OTHER PERSON
 ----
 
-# RESPONSE FORMAT
-Required Response Format:
-Action: [RESPOND or ARCHIVE]
-Reason: [Brief explanation of why this action was chosen]`;
+## CONTEXT
+${this.loadContextFiles()}
 
-      const userMessage = `Available Historical Context:
-${combinedContext}
+RESPONSE FORMAT:
+Write a well-structured email response. Do not include any meta information or labels, just the response text.
+Don't include to: from: subject: date: etc. Just the email body.
 
-Current Date: ${currentDate}
+${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.signature}` : "DO NOT add any signature"}`;
 
-Analyze this email:
-Subject: ${email.subject || ""}
-From: ${email.from || ""}
-Date: ${new Date(parseInt(email.internalDate)).toLocaleString()}
-# Content 
-${email.body || ""}`;
-
-      const messages = [
-        { role: "system", content: systemMessage },
-        { role: "user", content: userMessage }
-      ];
-
+      const messages = [{ role: "system", content: systemMessage }, ...threadMessages];
       const response = await this.callPollinationsAPI(messages);
-      const analysis = this.parseAIResponse(response.content);
-
-      // Force RESPOND action for important emails
-      if (isImportant && analysis.action === "ARCHIVE") {
-        console.info(`Forcing RESPOND action for important email: ${email.subject}`);
-        logger.info(`Forcing RESPOND action for important email`, {
-          emailId: email.id,
-          subject: email.subject,
-          originalAction: analysis.action
-        });
-        
-        analysis.action = "RESPOND";
-        analysis.reason = "Email marked as important - requires response";
-      }
-
-      return analysis;
+      return response.content.trim();
     } catch (error) {
-      console.error("Error analyzing email:", error);
-      logger.error("Error analyzing email", { error: error.message });
+      console.error("Error composing email response:", error);
+      logger.error("Error composing email response", { error: error.message });
       throw error;
     }
   }
 
-  async generateForcedResponse(email) {
-    return this.composeEmailResponse(email);
+  async generateForcedResponse(threadMessages) {
+    return this.respondToEmail(threadMessages);
   }
 
-  async refineResponse(originalEmail, originalResponse, userModification) {
-    return this.composeEmailResponse(originalEmail, {}, userModification);
+  async refineResponse(threadMessages, userModification) {
+    // Add the user modification as the last message in the thread
+    const messagesWithModification = [
+      ...threadMessages,
+      { role: "user", content: `Please revise the previous response. ${userModification}` }
+    ];
+    return this.respondToEmail(messagesWithModification);
   }
 
   parseAIResponse(response) {
@@ -226,7 +227,6 @@ ${email.body || ""}`;
 
       action = action.toUpperCase();
 
-
       return {
         action,
         reason,
@@ -242,56 +242,6 @@ ${email.body || ""}`;
         action: "RESPOND",
         reason: "Error parsing AI response",
       };
-    }
-  }
-
-
-  async composeEmailResponse(email, context = {}) {
-    try {
-      const userData = await userService.getUserData();
-      const combinedContext = this.loadContextFiles();
-
-      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
-
-Available Historical Context:
-${combinedContext}
-
-Current Date: ${currentDate}
-
-Email to Respond to:
-Subject: ${email.subject}
-From: ${email.from}
-Date: ${new Date(parseInt(email.internalDate)).toLocaleString()}
-# Content 
-${email.body}
-
-Composition Guidelines:
-1. Write in the same language as the original email
-2. Match the formality level of the original email
-3. Structure the response with proper paragraphs (use \n\n between paragraphs)
-4. Be concise yet thorough
-5. Address all points from the original email
-6. Maintain professional tone while being personable
-7. Format with proper spacing:
-   - Use double line breaks between paragraphs
-   - Separate greeting and signature with double line breaks
-   - Keep paragraphs logically grouped`;
-
-      const userMessage = `Signature Instruction: ${userData.preferences.useSignature ? `Include this signature:\n${userData.signature}` : "DO NOT add any signature"}
-
-Write a well-structured response with proper paragraph formatting.`;
-
-      const messages = [
-        { role: "system", content: systemMessage },
-        { role: "user", content: userMessage }
-      ];
-
-      const response = await this.callPollinationsAPI(messages);
-      return response.content.trim();
-    } catch (error) {
-      console.error("Error composing email response:", error);
-      logger.error("Error composing email response", { error: error.message });
-      throw error;
     }
   }
 }
