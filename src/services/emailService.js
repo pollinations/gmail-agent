@@ -8,6 +8,8 @@ const path = require("path");
 const open = require("open");
 const { OpenAIEmbeddings } = require("@langchain/openai");
 const { encode, decode } = require("gpt-3-encoder");
+const { default: PQueue } = require('p-queue');
+
 
 class EmailService {
   constructor() {
@@ -17,6 +19,7 @@ class EmailService {
     this.embeddings = null;
     this.emailEmbeddings = new Map(); // Cache for email embeddings
     this.similarityThreshold = 0.85;
+    this.queue = new PQueue({ concurrency: 8 });
   }
 
   async initialize() {
@@ -703,26 +706,48 @@ class EmailService {
     }
   }
 
+  async listMessages(maxResults = 100, query = "category:primary") {
+    try {
+      let allMessages = [];
+      let pageToken;
+
+      do {
+        const response = await this.gmail.users.messages.list({
+          maxResults: Math.min(maxResults - allMessages.length, 100), // Gmail API max is 100 per request
+          userId: "me",
+          q: query,
+          pageToken: pageToken
+        });
+
+        if (!response.data.messages) {
+          break;
+        }
+
+        allMessages = allMessages.concat(response.data.messages);
+        pageToken = response.data.nextPageToken;
+      } while (pageToken && allMessages.length < maxResults);
+      console.log("got ", allMessages.length, "messages");
+      return allMessages;
+    } catch (error) {
+      logger.error('Error listing messages', { error: error.message });
+      throw error;
+    }
+  }
+
   async fetchEmailThreads(maxResults = 100) {
     try {
-      console.log("asking for", maxResults,"threads");
-      // List all email threads from primary category
-      const response = await this.gmail.users.messages.list({
-        maxResults: maxResults,
-        userId: "me",
-        q: "category:primary",  // Simple query to get all primary emails
-      });
-
-      if (!response.data.messages) {
+      console.log("asking for", maxResults, "threads");
+      
+      const messages = await this.listMessages(maxResults);
+      
+      if (!messages.length) {
         logger.info("No messages found in Primary category");
         return [];
       }
 
-      logger.info(`Found ${response.data.messages.length} messages, fetching thread details...`);
-
       // Process each thread
       const processedThreads = await Promise.all(
-        response.data.messages.map(async (message) => {
+        messages.map(async (message) => this.queue.add(async () => {
           try {
             // Get the full thread
             const thread = await this.gmail.users.threads.get({
@@ -745,6 +770,9 @@ class EmailService {
               })
             );
 
+            console.log(`from: ${messages[0].from} subject: ${messages[0].subject}`);
+            // Get subject from the first message
+
             // Return thread info along with all messages
             return {
               threadId: thread.data.id,
@@ -752,6 +780,7 @@ class EmailService {
               snippet: thread.data.snippet,
               historyId: thread.data.historyId
             };
+            
           } catch (error) {
             console.error(`Error processing thread ${message.threadId}:`, error);
             logger.error(`Error processing thread ${message.threadId}`, {
@@ -760,7 +789,7 @@ class EmailService {
             });
             return null;
           }
-        })
+        }))
       );
 
       // Filter out null results

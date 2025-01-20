@@ -40,7 +40,7 @@ async function processEmails() {
     logger.info("Email service initialized");
 
     // Fetch email threads
-    let threads = await emailService.fetchEmailThreads(800);
+    let threads = await emailService.fetchEmailThreads(2000);
 
 
     logger.info(`Found ${threads.length} threads`);
@@ -66,73 +66,78 @@ async function processEmails() {
     let allOpenAIMessages = []
 
     for (const thread of uniqueThreads) {
-      if (thread) {
+      try {
+        if (thread) {
 
-        const content = await emailService.downloadThreadContent(thread.threadId);
-        if (!content.hasMyMessage && !content.needsReply) continue;
+          const content = await emailService.downloadThreadContent(thread.threadId);
+          if (!content.hasMyMessage && !content.needsReply) continue;
 
-        // console.log("thread content", content);
-        console.log(`\nProcessing thread ${thread.threadId}...`);
-        console.log(`Subject: ${content.subject}`);
-        // Pass just the messages array to cleanEmailThread
-        const cleanedMessages = cleanEmailThread(content.messages);
-  
-        // Create new thread object with cleaned messages
-        // const cleanedContent = {
-        //   ...content,
-        //   messages: cleanedMessages
-        // };
-        // threadContents.push(cleanedContent);
-        
-        let openAIMessages = [];
-        for (const message of cleanedMessages) {
-          const openAIMessage = {
-            "role": message.senderIsMe ? "assistant" : "user",
-            "content": formatAIMessageBody(message)
-          }
-          openAIMessages.push(openAIMessage);
-        }
-
-        if (content.needsReply) { 
-          const analysis = await aiService.analyzeEmail(openAIMessages);
+          // console.log("thread content", content);
+          console.log(`\nProcessing thread ${thread.threadId}...`);
+          console.log(`Subject: ${content.subject}`);
+          // Pass just the messages array to cleanEmailThread
+          const cleanedMessages = cleanEmailThread(content.messages);
+    
+          // Create new thread object with cleaned messages
+          // const cleanedContent = {
+          //   ...content,
+          //   messages: cleanedMessages
+          // };
+          // threadContents.push(cleanedContent);
           
-          console.log('----------------------------------------');
-          console.log('Analysis:', { analysis });
-          console.log('----------------------------------------');
-          
-          if (analysis.respond) {
-            allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
-
-            // console.log('Needs reply!!!', openAIMessages);
-            const reply = await aiService.respondToEmail(allOpenAIMessages);
-            console.log('Reply:', reply);
-            
-            // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
-            if (aiService.lastUsage.prompt_tokens > 80000) {
-              const messagesToRemove = Math.ceil(allOpenAIMessages.length * 0.1); // Calculate 10% of messages
-              allOpenAIMessages.splice(0, messagesToRemove); // Remove first 10% of messages
-              console.log(`Removed ${messagesToRemove} messages due to high token count`);
+          let openAIMessages = [];
+          for (const message of cleanedMessages) {
+            const openAIMessage = {
+              "role": message.senderIsMe ? "assistant" : "user",
+              "content": formatAIMessageBody(message)
             }
-            
-            // Create a draft with the AI's response
-            const lastMessage = cleanedMessages[cleanedMessages.length - 1];
-            await emailService.createDraft(thread.threadId, {
-              to: lastMessage.from,
-              subject: lastMessage.subject,
-              messageId: lastMessage.messageId,
-              references: lastMessage.references,
-              body: reply
-            });
-
-            allOpenAIMessages.push({
-              "role": "assistant",
-              "content": reply
-            });
-            
-            // Mark the last message as read
-            await emailService.markMessageAsRead(content.messages[content.messages.length - 1].id);
+            openAIMessages.push(openAIMessage);
           }
-        } 
+
+          if (content.needsReply) { 
+            const analysis = await aiService.analyzeEmail(openAIMessages);
+            
+            console.log('----------------------------------------');
+            console.log('Analysis:', { analysis });
+            console.log('----------------------------------------');
+            
+            if (analysis.respond) {
+              allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
+
+              // console.log('Needs reply!!!', openAIMessages);
+              const reply = await aiService.respondToEmail(allOpenAIMessages);
+              console.log('Reply:', reply);
+              
+              // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
+              if (aiService.lastUsage.prompt_tokens > 80000) {
+                const messagesToRemove = Math.ceil(allOpenAIMessages.length * 0.1); // Calculate 10% of messages
+                allOpenAIMessages.splice(0, messagesToRemove); // Remove first 10% of messages
+                console.log(`Removed ${messagesToRemove} messages due to high token count`);
+              }
+              
+              // Create a draft with the AI's response
+              const lastMessage = cleanedMessages[cleanedMessages.length - 1];
+              await emailService.createDraft(thread.threadId, {
+                to: lastMessage.from,
+                subject: lastMessage.subject,
+                messageId: lastMessage.messageId,
+                references: lastMessage.references,
+                body: reply
+              });
+
+              allOpenAIMessages.push({
+                "role": "assistant",
+                "content": reply
+              });
+              
+              // Mark the last message as read
+              await emailService.markMessageAsRead(content.messages[content.messages.length - 1].id);
+            }
+          } 
+        }
+      } catch (error) {
+        console.error(`Error processing thread ${thread.threadId}:`, error);
+        logger.error(`Error processing thread ${thread.threadId}`, { error: error.message });
       }
     }
 

@@ -34,6 +34,7 @@
     "gpt-3-encoder": "^1.1.4",
     "langchain": "^0.3.5",
     "node-cron": "^3.0.3",
-    "node-telegram-bot-api": "^0.66.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "p-queue": "^8.0.1"
   }
 }

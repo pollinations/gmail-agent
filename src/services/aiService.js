@@ -118,7 +118,7 @@ Return your analysis in the following JSON format:
 
       const messages = [
         { role: "system", content: systemMessage },
-        { role: "user", content: JSON.stringify(threadMessages, null, 2) }
+       ...threadMessages
       ];
 
       const response = await this.callPollinationsAPI(messages);
