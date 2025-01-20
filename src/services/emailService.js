@@ -10,7 +10,6 @@ const { OpenAIEmbeddings } = require("@langchain/openai");
 const { encode, decode } = require("gpt-3-encoder");
 const { default: PQueue } = require('p-queue');
 
-
 class EmailService {
   constructor() {
     this.gmail = null;
@@ -482,7 +481,7 @@ class EmailService {
 
       const message = [
         "From: me",
-        `To: ${from}`, // Original sender
+        `To: ${recipients.to}`, // Use all recipients from getUniqueRecipients
         ...(recipients.cc ? [`Cc: ${recipients.cc}`] : []), // Only add Cc if there are CC recipients
         `Subject: Re: ${subject}`,
         `References: ${references}`,
@@ -621,7 +620,6 @@ class EmailService {
     }
   }
 
-
   async createDraft(threadId, message) {
     try {
       // If message is a string, treat it as a simple response
@@ -633,17 +631,14 @@ class EmailService {
         
         const lastMessage = thread.data.messages[thread.data.messages.length - 1];
         const headers = lastMessage.payload.headers;
-        const from = headers.find(h => h.name === 'From')?.value;
-        const to = headers.find(h => h.name === 'To')?.value;
-        const cc = headers.find(h => h.name === 'Cc')?.value;
         const subject = headers.find(h => h.name === 'Subject')?.value;
         const references = headers.find(h => h.name === 'Message-ID')?.value;
 
-        // Get deduplicated recipients
-        const recipients = this.getUniqueRecipients(from, to, cc);
+        // Get all participants from the entire thread
+        const recipients = this.getAllThreadParticipants(thread.data.messages);
 
         message = {
-          to: from,
+          to: recipients.to,
           cc: recipients.cc,
           subject,
           messageId: references,
@@ -702,7 +697,7 @@ class EmailService {
       throw error;
     }
   }
-// category:primary
+
   async listMessages(maxResults = 100, query = "category:primary") {
     try {
       let allMessages = [];
@@ -973,6 +968,54 @@ class EmailService {
     );
 
     return results;
+  }
+
+  getAllThreadParticipants(messages) {
+    const toSet = new Set();
+    const ccSet = new Set();
+
+    messages.forEach(message => {
+      const headers = message.payload.headers;
+      const from = headers.find(h => h.name === 'From')?.value;
+      const to = headers.find(h => h.name === 'To')?.value;
+      const cc = headers.find(h => h.name === 'Cc')?.value;
+
+      // Add sender to To
+      if (from) {
+        toSet.add(this.extractEmail(from));
+      }
+
+      // Add To recipients
+      if (to) {
+        to.split(',').forEach(addr => {
+          const email = this.extractEmail(addr);
+          if (email) toSet.add(email);
+        });
+      }
+
+      // Add CC recipients
+      if (cc) {
+        cc.split(',').forEach(addr => {
+          const email = this.extractEmail(addr);
+          if (email && !toSet.has(email)) ccSet.add(addr.trim());
+        });
+      }
+    });
+
+    // Add pollinations.ai to CC if not already in To
+    if (!toSet.has("hello@pollinations.ai")) {
+      ccSet.add("hello@pollinations.ai");
+    }
+
+    logger.info('Thread participants:', { 
+      to: Array.from(toSet), 
+      cc: Array.from(ccSet)
+    });
+
+    return {
+      to: Array.from(toSet).join(", "),
+      cc: Array.from(ccSet).join(", ")
+    };
   }
 }
 

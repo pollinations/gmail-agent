@@ -41,7 +41,7 @@ async function processEmails() {
     logger.info("Email service initialized");
 
     // Fetch email threads
-    let threads = await emailService.fetchEmailThreads(800);
+    let threads = await emailService.fetchEmailThreads(10);
 
     
 

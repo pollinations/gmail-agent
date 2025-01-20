@@ -118,6 +118,10 @@ class AIService {
       const userData = await userService.getUserData();
 
       const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
+Current Status (${new Date().toISOString()}):
+- Location: Berlin, Germany (CET)
+- Important: Currently focusing on fundraising initiatives with Pollinations
+
 Analyze this email thread and determine if it needs a response.
 
 Classification Guidelines:
@@ -180,6 +184,10 @@ Return your analysis in the following JSON format:
       const userData = await userService.getUserData();
 
       const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
+Current Status (${new Date().toISOString()}):
+- Location: Berlin, Germany (CET)
+- Important: Currently focusing on fundraising initiatives with Pollinations
+
 Write a response to this email thread.
 
 Composition Guidelines:
@@ -196,6 +204,8 @@ Composition Guidelines:
 8. Write in the first person.
 9. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
 10. You have access to up-to-date background information from an AI agent who has access to web search. Use it in your response. Show off with it!!!
+- PLEASE RESPOND TO MESSAGES FROM BOARY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
+
 
 IMPORTANT:
 
@@ -211,6 +221,7 @@ CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOT
 - EVERYTHING WORKING NORMALLY
 - ALL SERVICES UP AND RUNNING!
 - IMPRESS THE OTHER BY USING SOME BACKGROUND INFORMATION FROM THE CONTEXT
+- PLEASE RESPOND TO MESSAGES FROM BOARY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
 ----
 
 ## CONTEXT
