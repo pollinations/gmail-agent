@@ -9,6 +9,7 @@ const currentDate = new Date().toISOString().split('T')[0];
 class AIService {
   constructor() {
     this.apiEndpoint = "https://text.pollinations.ai/openai";
+    // this.apiEndpoint = "http://localhost:16385/openai";
   }
 
   loadContextFiles() {
@@ -36,7 +37,7 @@ class AIService {
     }
   }
 
-  async callPollinationsAPI(messages, model = "openai") {
+  async callPollinationsAPI(messages, model = "deepseek") {
     try {
       console.log("calling pollinations api", messages, model);
       const response = await fetch(this.apiEndpoint, {

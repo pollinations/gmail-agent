@@ -30,20 +30,6 @@ async function checkConfig() {
   return config;
 }
 
-async function waitForUserResponse() {
-  return new Promise((resolve) => {
-    const checkInterval = setInterval(() => {
-      if (
-        !telegramService.pendingConfirmations.has(
-          parseInt(config.telegram.userId)
-        )
-      ) {
-        clearInterval(checkInterval);
-        resolve();
-      }
-    }, 250); // Further reduced to 250ms for even faster response
-  });
-}
 
 async function processEmail(email) {
   try {
@@ -65,9 +51,9 @@ async function processEmail(email) {
     );
 
     // Wait for user response before proceeding
-    logger.info(`Waiting for user response for email ${email.id}`);
-    await waitForUserResponse();
-    logger.info(`User responded to email ${email.id}`);
+    // logger.info(`Waiting for user response for email ${email.id}`);
+    // await waitForUserResponse();
+    // logger.info(`User responded to email ${email.id}`);
   } catch (error) {
     console.error(error);
     logger.error(`Error processing email ${email.id}`, {
@@ -112,6 +98,7 @@ async function processEmails() {
     // Process each email that hasn't been processed yet
     for (const email of emails) {
       if (!emailService.processedEmails.has(email.id)) {
+        console.log("should process email", email)
         await processEmail(email);
       } else {
         logger.info(`Skipping already processed email ${email.id} - Subject: "${email.subject}"`);
