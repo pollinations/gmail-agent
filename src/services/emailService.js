@@ -16,6 +16,7 @@ class EmailService {
     this.currentEmailBatch = []; // Store current batch of unread emails
     this.processedEmails = new Set(); // Keep track of processed emails
     this.queue = new PQueue({ concurrency: 1 });
+    this.userEmail = null; // Store user's email from Gmail profile
   }
 
   async initialize() {
@@ -106,6 +107,11 @@ class EmailService {
       }
 
       this.gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+      // Get and store user's email from profile
+      const profile = await this.gmail.users.getProfile({ userId: "me" });
+      this.userEmail = profile.data.emailAddress;
+      logger.info("Gmail service initialized successfully", { userEmail: this.userEmail });
 
       // Test the connection
       await this.gmail.users.getProfile({ userId: "me" });
@@ -622,29 +628,35 @@ class EmailService {
 
   async createDraft(threadId, message) {
     try {
-      // If message is a string, treat it as a simple response
+      // First fetch the thread data - we need this for participants regardless of message type
+      const thread = await this.gmail.users.threads.get({
+        userId: 'me',
+        id: threadId
+      });
+      
+      const lastMessage = thread.data.messages[thread.data.messages.length - 1];
+      const headers = lastMessage.payload.headers;
+      const subject = headers.find(h => h.name === 'Subject')?.value;
+      const references = headers.find(h => h.name === 'Message-ID')?.value;
+
+      // Get all participants from the entire thread
+      const recipients = this.getAllThreadParticipants(thread.data.messages);
+
+      // If message is a string, create structured message object
       if (typeof message === 'string') {
-        const thread = await this.gmail.users.threads.get({
-          userId: 'me',
-          id: threadId
-        });
-        
-        const lastMessage = thread.data.messages[thread.data.messages.length - 1];
-        const headers = lastMessage.payload.headers;
-        const subject = headers.find(h => h.name === 'Subject')?.value;
-        const references = headers.find(h => h.name === 'Message-ID')?.value;
-
-        // Get all participants from the entire thread
-        const recipients = this.getAllThreadParticipants(thread.data.messages);
-
         message = {
-          to: recipients.to,
-          cc: recipients.cc,
           subject,
           messageId: references,
           body: message
         };
       }
+
+      // Always use the thread participants for recipients
+      message = {
+        ...message,
+        to: recipients.to,
+        cc: recipients.cc
+      };
 
       // Ensure message body has proper line breaks
       const formattedBody = message.body
@@ -980,24 +992,31 @@ class EmailService {
       const to = headers.find(h => h.name === 'To')?.value;
       const cc = headers.find(h => h.name === 'Cc')?.value;
 
-      // Add sender to To
+      // Add sender to To if it's not me
       if (from) {
-        toSet.add(this.extractEmail(from));
+        const fromEmail = this.extractEmail(from);
+        if (fromEmail !== this.userEmail) {
+          toSet.add(fromEmail);
+        }
       }
 
-      // Add To recipients
+      // Add To recipients if they're not me
       if (to) {
         to.split(',').forEach(addr => {
           const email = this.extractEmail(addr);
-          if (email) toSet.add(email);
+          if (email && email !== this.userEmail) {
+            toSet.add(email);
+          }
         });
       }
 
-      // Add CC recipients
+      // Add CC recipients if they're not me
       if (cc) {
         cc.split(',').forEach(addr => {
           const email = this.extractEmail(addr);
-          if (email && !toSet.has(email)) ccSet.add(addr.trim());
+          if (email && email !== this.userEmail && !toSet.has(email)) {
+            ccSet.add(addr.trim());
+          }
         });
       }
     });

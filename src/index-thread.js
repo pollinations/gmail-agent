@@ -41,16 +41,11 @@ async function processEmails() {
     logger.info("Email service initialized");
 
     // Fetch email threads
-    let threads = await emailService.fetchEmailThreads(10);
+    let threads = await emailService.fetchEmailThreads(15);
 
-    // Filter threads to only include those with 'swapnali' in the subject
-    threads = threads.filter(thread => {
-      const lastMessage = thread.messages[thread.messages.length - 1];
-      const subject = lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '';
-      return subject.toLowerCase().includes('swapnali');
-    });
     
-    logger.info(`Found ${threads.length} threads with 'swapnali' in subject`);
+
+    logger.info(`Found ${threads.length} threads`);
 
     // Deduplicate threads by threadId, keeping the first occurrence
     const seenThreadIds = new Set();
