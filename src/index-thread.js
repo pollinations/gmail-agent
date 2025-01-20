@@ -96,13 +96,21 @@ async function processEmails() {
         if (content.needsReply) { 
           const shouldReply = await aiService.analyzeEmail(openAIMessages);
 
-          allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
           
           console.log('----------------------------------------');
           if (shouldReply) {
+            allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
+
             // console.log('Needs reply!!!', openAIMessages);
-            const reply = await aiService.respondToEmail(openAIMessages);
+            const reply = await aiService.respondToEmail(allOpenAIMessages);
             console.log('Reply:', reply);
+            
+            // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
+            if (aiService.lastUsage.prompt_tokens > 80000) {
+              const messagesToRemove = Math.ceil(allOpenAIMessages.length * 0.1); // Calculate 10% of messages
+              allOpenAIMessages.splice(0, messagesToRemove); // Remove first 10% of messages
+              console.log(`Removed ${messagesToRemove} messages due to high token count`);
+            }
             
             // Create a draft with the AI's response
             const lastMessage = cleanedMessages[cleanedMessages.length - 1];

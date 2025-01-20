@@ -66,13 +66,7 @@ class AIService {
         console.log("usage", data.usage);
         this.lastUsage = data.usage;
         
-        // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
-        if (data.usage.prompt_tokens > 80000 && messages.length > 1) {
-          const messagesToRemove = Math.ceil(messages.length * 0.1); // Calculate 10% of messages
-          messages.splice(0, messagesToRemove); // Remove first 10% of messages
-          console.log(`Removed ${messagesToRemove} messages due to high token count`);
-        }
-        
+
         const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
         // console.log("received response", textResponse);
         return {role: "assistant", content: textResponse};
@@ -111,15 +105,11 @@ Classification Guidelines:
 
 2. Return TRUE if ANY of these conditions are met:
    - The email is from a real person (not automated)
-   - Contains a direct question or request
+   - Contains a direct question or request to me
    - Requires your input, decision, or acknowledgment
    - Is part of an ongoing conversation
    - Contains important information that needs confirmation
-   - Is a personal or business communication
-   - Shows urgency or importance
-   - Mentions deadlines or time-sensitive matters
-
-When in doubt, return TRUE to avoid missing important communications.
+   - Shows urgency or importance and mentions deadlines or time-sensitive matters
 
 RESPONSE FORMAT:
 Return ONLY the word TRUE or FALSE`;

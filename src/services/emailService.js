@@ -621,61 +621,6 @@ class EmailService {
     }
   }
 
-  async bulkMarkAsRead(emailIds) {
-    const results = [];
-    for (const emailId of emailIds) {
-      try {
-        await this.markAsRead(emailId);
-        results.push({ emailId, success: true });
-      } catch (error) {
-        results.push({ emailId, success: false, error: error.message });
-      }
-    }
-
-    // Force refresh the current batch after bulk operation
-    this.currentEmailBatch = this.currentEmailBatch.filter(
-      (email) => !emailIds.includes(email.id)
-    );
-
-    return results;
-  }
-
-  async fetchEmailsInRange(startTime, endTime) {
-    try {
-      logger.info(`Fetching emails between ${startTime} and ${endTime}`);
-
-      const response = await this.gmail.users.messages.list({
-        userId: "me",
-        q: `category:primary after:${Math.floor(startTime.getTime() / 1000)} before:${Math.floor(endTime.getTime() / 1000)}`,
-        maxResults: 500,
-      });
-
-      if (!response.data.messages) {
-        logger.info("No messages found in the specified time range");
-        return [];
-      }
-
-      const emails = await Promise.all(
-        response.data.messages.map(async (message) => {
-          const email = await this.gmail.users.messages.get({
-            userId: "me",
-            id: message.id,
-          });
-          return this.parseEmail(email.data);
-        })
-      );
-
-      logger.info(`Found ${emails.length} emails in the specified time range`);
-      return emails;
-    } catch (error) {
-      logger.error("Failed to fetch emails in range", {
-        error: error.message,
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-      });
-      throw error;
-    }
-  }
 
   async createDraft(threadId, message) {
     try {
