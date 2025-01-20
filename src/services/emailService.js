@@ -16,10 +16,7 @@ class EmailService {
     this.gmail = null;
     this.currentEmailBatch = []; // Store current batch of unread emails
     this.processedEmails = new Set(); // Keep track of processed emails
-    this.embeddings = null;
-    this.emailEmbeddings = new Map(); // Cache for email embeddings
-    this.similarityThreshold = 0.85;
-    this.queue = new PQueue({ concurrency: 8 });
+    this.queue = new PQueue({ concurrency: 1 });
   }
 
   async initialize() {
@@ -705,7 +702,7 @@ class EmailService {
       throw error;
     }
   }
-
+// category:primary
   async listMessages(maxResults = 100, query = "category:primary") {
     try {
       let allMessages = [];
@@ -747,7 +744,7 @@ class EmailService {
 
       // Process each thread
       const processedThreads = await Promise.all(
-        messages.map(async (message) => this.queue.add(async () => {
+        messages.map(async (message, index) => this.queue.add(async () => {
           try {
             // Get the full thread
             const thread = await this.gmail.users.threads.get({
@@ -760,7 +757,7 @@ class EmailService {
             }
 
             // Parse all messages in the thread
-            const messages = await Promise.all(
+            const threadMessages = await Promise.all(
               thread.data.messages.map(async (msg) => {
                 const email = await this.gmail.users.messages.get({
                   userId: "me",
@@ -770,13 +767,13 @@ class EmailService {
               })
             );
 
-            console.log(`from: ${messages[0].from} subject: ${messages[0].subject}`);
+            console.log(`Progress: ${index + 1}/${messages.length} From: ${threadMessages[0].from} Subject: ${threadMessages[0].subject}.`);
             // Get subject from the first message
 
             // Return thread info along with all messages
             return {
               threadId: thread.data.id,
-              messages: messages,
+              messages: threadMessages.slice(-5), // last 2
               snippet: thread.data.snippet,
               historyId: thread.data.historyId
             };

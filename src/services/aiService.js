@@ -8,8 +8,8 @@ const currentDate = new Date().toISOString().split('T')[0];
 
 class AIService {
   constructor() {
-    this.apiEndpoint = "https://text.pollinations.ai/openai";
-    // this.apiEndpoint = "http://localhost:16385/openai";
+    // this.apiEndpoint = "https://text.pollinations.ai/openai";
+    this.apiEndpoint = "http://localhost:16385/openai";
   }
 
   loadContextFiles() {
@@ -37,51 +37,79 @@ class AIService {
     }
   }
 
-  async callPollinationsAPI(messages, model = "claude-email") {
-    try {
-      console.log("calling pollinations api", messages.length, model, "last message", messages[messages.length - 1]);
-      const response = await fetch(this.apiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages,
-          model,
-          temperature: 0.7,
-        }),
-      });
+  async callPollinationsAPI(messages, json=false, model = "claude-email") {
+    const maxRetries = 3;
+    let retryCount = 0;
 
-      if (!response.ok) {
-        // log whole response body
-        console.error("API call failed:", await response.text());
-        throw new Error(`API call failed: ${response.statusText}`);
-      }
-
-      // Add error handling for text response
-      const text = await response.text();
+    while (retryCount <= maxRetries) {
       try {
-        // Try to parse as JSON first
-        const data = JSON.parse(text);
-        console.log("usage", data.usage);
-        this.lastUsage = data.usage;
+        console.log(`API call attempt ${retryCount + 1}/${maxRetries + 1}`);
+        console.log("calling pollinations api", messages.length, model, "last message", messages[messages.length - 1]);
         
+        const response = await fetch(this.apiEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Referer':'pollinations'
+          },
+          body: JSON.stringify({
+            messages,
+            model,
+            temperature: 0.7,
+            json,
+            jsonMode: json,
+            referrer: 'pollinations'
+          }),
+        });
 
-        const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
-        // console.log("received response", textResponse);
-        return {role: "assistant", content: textResponse};
-      } catch (e) {
-        // If not JSON, return the raw text
-        return {role: "assistant", content: text.trim()} ;
+        if (!response.ok) {
+          // log whole response body
+          const errorText = await response.text();
+          console.error("API call failed:", errorText);
+          
+          if (retryCount < maxRetries) {
+            const delay = Math.pow(2, retryCount) * 1000; // exponential backoff: 1s, 2s, 4s
+            console.log(`Retrying in ${delay/1000} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            retryCount++;
+            continue;
+          }
+          throw new Error(`API call failed: ${response.statusText}`);
+        }
+
+        // Add error handling for text response
+        const text = await response.text();
+        try {
+          // Try to parse as JSON first
+          const data = JSON.parse(text);
+          console.log("usage", data.usage);
+          this.lastUsage = data.usage;
+          
+          const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
+          // console.log("received response", textResponse);
+          return {role: "assistant", content: textResponse};
+        } catch (e) {
+          // If not JSON, return the raw text
+          return {role: "assistant", content: text.trim()} ;
+        }
+
+      } catch (error) {
+        if (retryCount < maxRetries) {
+          console.error(`Attempt ${retryCount + 1} failed:`, error);
+          const delay = Math.pow(2, retryCount) * 1000;
+          console.log(`Retrying in ${delay/1000} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          retryCount++;
+          continue;
+        }
+        
+        console.error("Error calling Pollinations API (all retries exhausted):", error);
+        logger.error("Error calling Pollinations API", { 
+          error: error.message,
+          endpoint: this.apiEndpoint 
+        });
+        throw error;
       }
-
-    } catch (error) {
-      console.error("Error calling Pollinations API:", error);
-      logger.error("Error calling Pollinations API", { 
-        error: error.message,
-        endpoint: this.apiEndpoint 
-      });
-      throw error;
     }
   }
 
@@ -121,14 +149,15 @@ Return your analysis in the following JSON format:
        ...threadMessages
       ];
 
-      const response = await this.callPollinationsAPI(messages);
+      const response = await this.callPollinationsAPI(messages, true);
+      console.log("response", response.content);
       try {
         const jsonResponse = JSON.parse(response.content);
-        logger.info("Email analysis result", { 
-          respond: jsonResponse.respond, 
-          reason: jsonResponse.reason,
-          threadId: threadMessages[0]?.id || 'unknown'
-        });
+        // logger.info("Email analysis result", { 
+        //   respond: jsonResponse.respond, 
+        //   reason: jsonResponse.reason,
+        //   threadId: threadMessages[0]?.id || 'unknown'
+        // });
         return jsonResponse;
       } catch (error) {
         logger.error("Failed to parse AI response as JSON", { error: error.message, response: response.content });
@@ -144,6 +173,8 @@ Return your analysis in the following JSON format:
     }
   }
 
+  // 4. Be concise yet thorough
+
   async respondToEmail(threadMessages) {
     try {
       const userData = await userService.getUserData();
@@ -155,7 +186,7 @@ Composition Guidelines:
 1. Write in the same language as the original email
 2. Match the formality level of the original email
 3. Structure the response with proper paragraphs (use \n\n between paragraphs)
-4. Be concise yet thorough
+4. Respond in detail referencing information from the email thread and also background information that you know or was provided in the context.
 5. Address all points from the original email
 6. Maintain professional tone while being personable
 7. Format with proper spacing:
@@ -163,7 +194,8 @@ Composition Guidelines:
    - Separate greeting and signature with double line breaks
    - Keep paragraphs logically grouped
 8. Write in the first person.
-9. Be concise and to the point. Avoid being too positive and marketing-like.
+9. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
+10. You have access to up-to-date background information from an AI agent who has access to web search. Use it in your response. Show off with it!!!
 
 IMPORTANT:
 
@@ -176,10 +208,9 @@ CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOT
 - DON'T ACCEPPT APPOINTMENTS
 ----
 - WE OFFER FREE TEXT AND IMAGE GENERATION APIS.
-- 14.11.24
 - EVERYTHING WORKING NORMALLY
 - ALL SERVICES UP AND RUNNING!
-- IF CAROLINE IS IN THE THHREAD DONT RESPOND TO HER BUT THE OTHER PERSON
+- IMPRESS THE OTHER BY USING SOME BACKGROUND INFORMATION FROM THE CONTEXT
 ----
 
 ## CONTEXT
@@ -212,6 +243,32 @@ ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.s
       { role: "user", content: `Please revise the previous response. ${userModification}` }
     ];
     return this.respondToEmail(messagesWithModification);
+  }
+
+  async searchBackgroundInformation(thread) {
+    try {
+      const threadContent = thread.messages.map(msg => 
+        `From: ${msg.from}\nTo: ${msg.to}\nSubject: ${msg.subject}\n${msg.body}`
+      ).join('\n---\n');
+
+      const messages = [
+        {
+          role: "system",
+          content: "You are an assistant tasked with searching for background knowledge about the other participants or topics discussed in this email thread (not about Pollinations, Thomas Haferlach, or email addresses containing 'thomash'). Format your response in detailed bullet points under these categories:\n\n• PERSON\n- Full name and role\n- Organization and position\n- Relevant background and expertise\n- Any notable achievements or projects mentioned\n\n• CONTEXT\n- Their specific questions or requests\n- Technical or domain-specific context\n- Previous interactions or relationships\n- Any deadlines or time-sensitive elements\n\n• KEY POINTS\n- Main interests or concerns\n- Potential collaboration areas\n- Any specific requirements or preferences\n\nProvide thorough details in each bullet point while staying relevant. Skip categories if no information is available. Ignore information about Pollinations as the email agent already has this context."
+        },
+        {
+          role: "user",
+          content: threadContent
+        },
+        { role: "user", content: "Search for information about the other participants or specific topics discussed and return it in detailed bullet points under the specified categories. Don't respond to the email - just provide the background information." }
+      ];
+
+      const response = await this.callPollinationsAPI(messages, false, "searchgpt");
+      return response.content;
+    } catch (error) {
+      logger.error("Error in searchBackgroundInformation", { error: error.message });
+      throw error;
+    }
   }
 
   parseAIResponse(response) {
