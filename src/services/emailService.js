@@ -705,11 +705,12 @@ class EmailService {
 
   async fetchEmailThreads(maxResults = 100) {
     try {
+      console.log("asking for", maxResults,"threads");
       // List all email threads from primary category
       const response = await this.gmail.users.messages.list({
+        maxResults: maxResults,
         userId: "me",
         q: "category:primary",  // Simple query to get all primary emails
-        maxResults: maxResults,
       });
 
       if (!response.data.messages) {

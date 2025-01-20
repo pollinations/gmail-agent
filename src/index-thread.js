@@ -40,7 +40,7 @@ async function processEmails() {
     logger.info("Email service initialized");
 
     // Fetch email threads
-    let threads = await emailService.fetchEmailThreads(500);
+    let threads = await emailService.fetchEmailThreads(800);
 
 
     logger.info(`Found ${threads.length} threads`);
@@ -97,7 +97,7 @@ async function processEmails() {
           const analysis = await aiService.analyzeEmail(openAIMessages);
           
           console.log('----------------------------------------');
-          console.log('Analysis:', analysis.reason);
+          console.log('Analysis:', { analysis });
           console.log('----------------------------------------');
           
           if (analysis.respond) {
