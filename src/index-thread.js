@@ -6,6 +6,8 @@ const fs = require("fs");
 const cleanEmailThread = require('./utils/cleanEmailThread');
 const tqdm = require("tqdm");
 
+const MUM_MESSAGE_HISTORY_TO_FETCH = 50;
+
 // Move service requires inside functions to prevent early initialization
 let emailService, aiService;
 
@@ -41,7 +43,7 @@ async function processEmails() {
     logger.info("Email service initialized");
 
     // Fetch email threads
-    let threads = await emailService.fetchEmailThreads(15);
+    let threads = await emailService.fetchEmailThreads(MUM_MESSAGE_HISTORY_TO_FETCH);
 
     
 
@@ -73,12 +75,12 @@ async function processEmails() {
         if (thread) {
 
           const content = await emailService.downloadThreadContent(thread.threadId);
-          console.log("needsReply",  content.hasMyMessage, content.needsReply);
+          console.log("from:", content.messages[0]?.from,"to:", content.messages[0]?.to,"subject:", content.subject, "hasMyMessage ",  content.hasMyMessage, "needsReply", content.needsReply);
           if (!content.hasMyMessage && !content.needsReply) continue;
 
           // console.log("thread content", content);
           console.log(`\nProcessing thread ${thread.threadId}...`);
-          console.log(`Subject: ${content.subject}`);
+          console.log(`Subject: ${content.subject} - From: ${content.messages[0].from}`);
           // Pass just the messages array to cleanEmailThread
           const cleanedMessages = cleanEmailThread(content.messages);
     
@@ -90,7 +92,7 @@ async function processEmails() {
           // threadContents.push(cleanedContent);
           
           console.log('----------------------------------------');
-          console.log('Cleaned messages:', cleanedMessages);
+          console.log('Cleaned messages:', cleanedMessages.length);
           console.log('----------------------------------------');
           let openAIMessages = [];
           for (const message of cleanedMessages) {
@@ -98,7 +100,7 @@ async function processEmails() {
               "role": message.senderIsMe ? "assistant" : "user",
               "content": formatAIMessageBody(message)
             }
-            console.log(openAIMessage);
+            // console.log(openAIMessage);
             openAIMessages.push(openAIMessage);
           }
 
@@ -110,14 +112,17 @@ async function processEmails() {
             console.log('----------------------------------------');
             
             if (analysis.respond) {
-              allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
 
               // Search for background information
               const backgroundInfo = await aiService.searchBackgroundInformation(thread);
               console.log('Background information:', backgroundInfo);
               // process.exit(1);
               // console.log('Needs reply!!!', openAIMessages);
-              const reply = await aiService.respondToEmail([...openAIMessages, { role: "function", "content": backgroundInfo, name: "getBackgroundInformation"  }], allOpenAIMessages);
+              const reply = await aiService.respondToEmail([
+                ...allOpenAIMessages, 
+                { role: "function", "content": backgroundInfo, name: "getBackgroundInformation"  }
+              ]);
+
               console.log('Reply:', reply);
               
               // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
@@ -142,8 +147,19 @@ async function processEmails() {
                 "content": reply
               });
               
+              console.log('----------------------------------------');
+              console.log(`Context size after adding reply: ${allOpenAIMessages.length} messages`);
+              console.log('----------------------------------------');
+              
               // Mark the last message as read
               await emailService.markMessageAsRead(content.messages[content.messages.length - 1].id);
+            } else {
+              if (content.hasMyMessage) {
+                allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
+                console.log('----------------------------------------');
+                console.log(`Context size after adding thread messages: ${allOpenAIMessages.length} messages`);
+                console.log('----------------------------------------');
+              }
             }
           } 
         }

@@ -10,6 +10,7 @@ class AIService {
   constructor() {
     // this.apiEndpoint = "https://text.pollinations.ai/openai";
     this.apiEndpoint = "http://localhost:16385/openai";
+    this.currentSeed = 42; // Initialize seed
   }
 
   loadContextFiles() {
@@ -40,11 +41,12 @@ class AIService {
   async callPollinationsAPI(messages, json=false, model = "claude-email") {
     const maxRetries = 3;
     let retryCount = 0;
+    this.currentSeed = 42; // Reset seed for new request
 
     while (retryCount <= maxRetries) {
       try {
-        console.log(`API call attempt ${retryCount + 1}/${maxRetries + 1}`);
-        console.log("calling pollinations api", messages.length, model, "last message", messages[messages.length - 1]);
+        console.log(`API call attempt ${retryCount + 1}/${maxRetries + 1} with seed ${this.currentSeed}`);
+        console.log("calling pollinations api", messages.length, model, "last message", JSON.stringify(messages[messages.length - 1], null, 2).slice(0,300));
         
         const response = await fetch(this.apiEndpoint, {
           method: 'POST',
@@ -58,7 +60,8 @@ class AIService {
             temperature: 0.7,
             json,
             jsonMode: json,
-            referrer: 'pollinations'
+            referrer: 'pollinations',
+            seed: this.currentSeed
           }),
         });
 
@@ -70,6 +73,7 @@ class AIService {
           if (retryCount < maxRetries) {
             const delay = Math.pow(2, retryCount) * 1000; // exponential backoff: 1s, 2s, 4s
             console.log(`Retrying in ${delay/1000} seconds...`);
+            this.currentSeed++; // Increment seed for next retry
             await new Promise(resolve => setTimeout(resolve, delay));
             retryCount++;
             continue;
@@ -98,6 +102,7 @@ class AIService {
           console.error(`Attempt ${retryCount + 1} failed:`, error);
           const delay = Math.pow(2, retryCount) * 1000;
           console.log(`Retrying in ${delay/1000} seconds...`);
+          this.currentSeed++; // Increment seed for next retry
           await new Promise(resolve => setTimeout(resolve, delay));
           retryCount++;
           continue;
@@ -204,7 +209,8 @@ Composition Guidelines:
 8. Write in the first person.
 9. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
 10. You have access to up-to-date background information from an AI agent who has access to web search. Use it in your response. Show off with it!!!
-- PLEASE RESPOND TO MESSAGES FROM BOARY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
+11. When you mention Discord, actually render the link.
+- PLEASE RESPOND TO MESSAGES FROM BOARDY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
 
 
 IMPORTANT:
