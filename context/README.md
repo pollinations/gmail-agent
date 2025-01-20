@@ -2,21 +2,26 @@
 
 *Your Engine for Personalized Synthetic Media*
 
+## 🆕 NEWS: MentatBot AI Assistant
+
+We're excited to announce MentatBot, our autonomous AI coding assistant that implements new features directly from GitHub issues! Simply [create an issue](https://github.com/pollinations/pollinations/issues/new) describing what you'd like to see, and MentatBot will analyze and implement it. Learn more about [MentatBot](https://mentat.ai/).
+
 [![Pollinations.AI Logo](https://pollinations.ai/p/Pollinations.AI_logo_that_looks_cool_on_black_background?width=3000&height=1000&nologo=true&seed=-1)](https://pollinations.ai/p/Pollinations.AI_logo_that_looks_cool_on_black_background?width=3000&height=1000&nologo=true&seed=-1)
 
 ## 🌟 Introduction
 
-[Pollinations.AI](https://pollinations.ai) is the most easy-to-use, free text and image generation API available. No signups or API keys required.
+[Pollinations.AI](https://pollinations.ai) is the most easy-to-use, free text and image generation API available. No signups or API keys required. We prioritize your privacy with zero data storage and completely anonymous usage.
 
 ## 🚀 Key Features
 
 - 🔓 **100% Open Source**
 - 🆓 **_Free to use_**
-- 🔑 No signup or API keys
+- 🔒 **Simplicity and privacy:** No logins, no keys, no data stored
 - 🖼️ **Embed like any normal image or text**
 - 🌍 Over **50,000 active users** and > **_8 million images generated per month_**
 - 🤝 Used by various **open-source LLMs**, **bots**, and **communities**
 - 🎣 **_Easy-to-use React hooks_** ([React Hooks Examples](https://react-hooks.pollinations.ai/))
+- 🤖 **Autonomous Development:** Features implemented by our MentatBot coding assistant through GitHub issues
 
 <a href="https://star-history.com/#pollinations/pollinations&Date">
  <picture>
@@ -136,10 +141,14 @@ graph LR
     E --> D[FLUX image generation model - 2-6 GPU VMs on AWS]
     
     C[text.pollinations.ai - AWS EC2 CPU] --> P[karma.yt - Realtime News]
+    C --> SC[Scaleway API]
+    C --> DS[Deepseek API]
     C --> G[Azure-hosted Serverless LLMs]
-    G  --> H[OpenAI]
-    G --> I[Mistral]
-    G --> J[Llama]
+    SC --> MI[Mistral Models]
+    SC --> QW[Qwen Models]
+    SC --> LL[Llama Models]
+    DS --> DM[Deepseek Models]
+    G --> H[OpenAI]
     G --> K[Claude]
 
 ```
@@ -149,38 +158,64 @@ graph LR
 Pollinations.AI is used in various projects, including:
 
 ### LLM Integrations
-1. [TurboReel](https://turboreel.com): An open-source video generation system using AI to create engaging content from scripts. Created by @pedroriosa. [GitHub Repo](https://github.com/turboreel/turboreel)
-2. [SillyTavern](https://docs.sillytavern.app/extensions/stable-diffusion/): An LLM frontend for power users. Pollinations permits it to generate images. [GitHub Repo](https://github.com/SillyTavern/SillyTavern)
-3. [Qwen-Agent](https://github.com/QwenLM/Qwen-Agent): A framework for developing agentic LLM applications.
-4. [LobeChat](https://lobehub.com/plugins/pollinations-drawing): An open-source, modern-design ChatGPT/LLMs UI/Framework. Supports speech-synthesis, multi-modal, and extensible (function call) plugin system. [GitHub Repo](https://github.com/lobehub/lobe-chat)
-5. [Unity AI Lab](https://blog.unityailab.com/unity.html): A specialized uncensored LLM model built on Mistral Large, focused on unrestricted conversations.
-6. [DynaSpark AI](https://dynaspark.onrender.com): A versatile AI assistant with advanced image and text generation capabilities, integrating Pollinations.ai for image generation. Created by [Th3-C0der](https://github.com/Th3-C0der).
-7. [FlowGPT](https://flowgpt.com/p/instant-image-generation-with-chatgpt-and-pollinationsai): Generate images on-demand with ChatGPT.
-8. [Sirius Cybernetics Elevator Challenge](https://sirius-cybernetics.pollinations.ai/): A Hitchhiker's Guide to the Galaxy themed LLM-based elevator game. Created by @thomash_pollinations. [GitHub Repo](https://github.com/voodoohop/sirius-cybernetics-elevator-challenge)
+
+| Project | Description | Creator | Links |
+|---------|-------------|---------|-------|
+| SillyTavern | An LLM frontend for power users. Pollinations permits it to generate images | - | [Docs](https://docs.sillytavern.app/extensions/stable-diffusion/), [GitHub](https://github.com/SillyTavern/SillyTavern) |
+| Qwen-Agent | A framework for developing agentic LLM applications | - | [GitHub](https://github.com/QwenLM/Qwen-Agent) |
+| LobeChat | An open-source, modern-design ChatGPT/LLMs UI/Framework with speech-synthesis, multi-modal, and extensible plugin system | - | [Website](https://lobehub.com/plugins/pollinations-drawing), [GitHub](https://github.com/lobehub/lobe-chat) |
+| Unity AI Lab | A specialized uncensored LLM model built on Mistral Large, focused on unrestricted conversations | - | [Website](https://blog.unityailab.com/unity.html) |
+| DynaSpark AI | A versatile AI assistant with advanced image and text generation capabilities | Th3-C0der | [Website](https://dynaspark.onrender.com), [GitHub](https://github.com/Th3-C0der) |
+| FlowGPT | Generate images on-demand with ChatGPT | - | [Website](https://flowgpt.com/p/instant-image-generation-with-chatgpt-and-pollinationsai) |
+| Sirius Cybernetics Elevator Challenge | A Hitchhiker's Guide to the Galaxy themed LLM-based elevator game | @thomash_pollinations | [Demo](https://sirius-cybernetics.pollinations.ai/), [GitHub](https://github.com/voodoohop/sirius-cybernetics-elevator-challenge) |
 
 ### Social Bots
-1. [Discord Bot](https://discord.gg/D9xGg8mq3D): A Discord bot that uses Pollinations.ai for generating images based on user prompts. Created by @Zngzy. [GitHub Repo](https://github.com/Zingzy/pollinations.ai-bot)
-2. [WhatsApp Group](https://chat.whatsapp.com/KI37JqT5aYdL9WBYMyyjDV): A WhatsApp group that allows you to generate images using Pollinations.ai. Created by @dg_karma.
-3. [Telegram Bot](http://t.me/pollinationsbot): A Telegram bot that uses Pollinations.ai for generating images based on user prompts. Created by Wong Wei Hao.
-4. [Anyai](https://discord.com): A Discord bot and community that leverages Pollinations.ai for generating AI-driven content. Created by @meow_18838.
-5. [OpenHive](https://discord.gg/Zv3SXTF5xy): A Discord server that bridges the gap between Discord and AI. With Beebot, access dozens of ChatGPT prompts and generate images using Pollinations.ai! Created by @creativegpt.
+
+| Bot | Description | Creator | Links |
+|-----|-------------|---------|-------|
+| Discord Bot | A Discord bot for generating images based on user prompts | @Zngzy | [Discord](https://discord.gg/D9xGg8mq3D), [GitHub](https://github.com/Zingzy/pollinations.ai-bot) |
+| WhatsApp Group | A WhatsApp group for image generation | @dg_karma | [Join Group](https://chat.whatsapp.com/KI37JqT5aYdL9WBYMyyjDV) |
+| Telegram Bot | A Telegram bot for generating images based on user prompts | Wong Wei Hao | [Telegram](http://t.me/pollinationsbot) |
+| Anyai | A Discord bot and community for AI-driven content | @meow_18838 | [Discord](https://discord.com) |
+| OpenHive | A Discord server bridging Discord and AI, featuring Beebot | @creativegpt | [Discord](https://discord.gg/Zv3SXTF5xy) |
+
+### SDK & Libraries
+
+| Library | Description | Creator | Links |
+|---------|-------------|---------|-------|
+| Polli API Dashboard 🆕 | A beautiful realtime dashboard monitoring text.pollinations.ai/feed with detailed statistics and analytics. | @sugamdeol | [Website](https://polli-api.vercel.app) • [GitHub](https://github.com/Sugamdeol/Polli-api) |
+| @pollinations/react 🆕 | React hooks for easy integration of Pollinations' image and text generation. Features usePollinationsImage, usePollinationsText, and usePollinationsChat hooks. | @pollinations | [NPM](https://www.npmjs.com/package/@pollinations/react) • [Docs](https://react-hooks.pollinations.ai/) |
+| pypollinations 🆕 | Comprehensive Python wrapper for Pollinations AI API with async support, image/text generation, and model management. | @KTS-o7 | [PyPI](https://pypi.org/project/pypollinations/) |
+| pollinations.ai Python SDK 🆕 | Official Python SDK for working with Pollinations' generative models. Supports both image and text generation with conversation context. | @pollinations-ai | [GitHub](https://github.com/pollinations-ai/pollinations.ai) |
 
 ### Mobile & Web Applications
-1. [Pollinator Android App](https://github.com/g-aggarwal/Pollinator): An open-source Android app for text-to-image generation using Pollinations.ai's endpoint. Created by @gaurav_87680.
-2. [TurboReel](https://turboreel.com): An open-source video generation system using AI to create engaging content from scripts. Created by @pedroriosa. [GitHub Repo](https://github.com/turboreel/turboreel)
-3. [MIDIjourney](https://github.com/korus-labs/MIDIjourney): An AI-powered plugin for Ableton Live that turns text descriptions into music. Created by KORUS Labs. [GitHub Repo](https://github.com/korus-labs/MIDIjourney)
-4. [Own-AI](https://own-ai.pages.dev/): An AI text-to-image generator powered by Pollinations.ai. Users can describe the images they want, generate them, and share them. Created by Sujal Goswami. [GitHub Repo](https://github.com/sujal-goswami/Own-AI)
-5. [Infinite Tales](https://infinite-tales-rpg.vercel.app/): A Choose Your Own Adventure RPG, dynamically narrated by AI. Customize your adventure, build your hero, and explore vast lands. Each journey is uniquely generated by AI. Created by JayJayBinks. [GitHub Repo](https://github.com/JayJayBinks/infinite-tales-rpg)
-6. [POLLIPAPER](https://github.com/Tolerable/POLLIPAPER): A dynamic wallpaper app that uses Pollinations AI to create unique desktop backgrounds. It offers weather-based prompts and customizable settings. Created by @intolerant0ne. [GitHub Repo](https://github.com/Tolerable/)
-7. [StorySight](https://github.com/abiral-manandhar/storySight): An app to help children with learning disabilities by visualizing abstract concepts. Made using Django and Pollinations.ai. Submitted to: [Devpost](https://devpost.com/software/storysight)
-8. [StoryWeaver](https://devpost.com/software/storyweaver-013xdw): StoryWeaver crafts personalized picture books for children based on themes and prompts you choose, bringing your unique story ideas to life with AI! Created by Advaith Narayanan, Omeed Sabouri, Yufan Wang. [GitHub Repo](https://github.com/AdvaithN1/StoryWeaver)
-9. [Websim](https://websim.ai/c/bXsmNE96e3op5rtUS): A web simulation tool that integrates Pollinations.ai for generating AI-driven content. Remix the app with your own prompts. Created by @thomash_pollinations.
-10. [JCode Website Builder](https://jcode-ai-website-bulder.netlify.app/ai-website-builder/generated-projects/categories): A website generator using Pollinations text API. Created by @rtxpower.
-11. [JustBuildThings](https://justbuildthings.com): A collection of AI tools for image generation, character chat, and writing powered by Pollinations. Created by rasit.
+
+| Application | Description | Creator | Links |
+|-------------|-------------|---------|-------|
+| Free AI Chatbot & Image Generator | A mobile app offering unlimited AI chat and image generation powered by GPT-4 and Flux. | @andreas_11 | [Website](https://freeaichat.app) |
+| AI-Bloom 🆕 | A minimal yet creative showcase of AI-powered visual and interactive content generation using Pollinations. | @diepdo1810 | [Website](https://ai-bloom.vercel.app/) • [GitHub](https://github.com/diepdo1810/AI-Bloom) |
+| Image Gen - Uncensored Edition 🆕 | A powerful image generation assistant on HuggingChat powered by Qwen 2.5 (72B). Features intelligent model selection across multiple diffusion models and uncensored capabilities. | @DeFactOfficial | [HuggingChat](https://huggingface.co/chat/assistant/66fccce0c0fafc94ab557ef2) |
+| Pollinator Android App | An open-source Android app for text-to-image generation using Pollinations.ai's endpoint. | @gaurav_87680 | [GitHub](https://github.com/g-aggarwal/Pollinator) |
+| Rangrez AI | A web platform focused on inspiring, creating, and customizing designs with AI-powered tools, powered by Pollinations and GroqCloud. | @saadaryf | [Website](https://rangrezai.com) |
+| Roblox Character RP 🆕 | A Roblox game where players can create and roleplay with AI characters using Pollinations' text generation. | @user113 | [Roblox](https://www.roblox.com/games/108463136689847) |
+| MIDIjourney | An AI-powered plugin for Ableton Live that turns text descriptions into music. | KORUS Labs | [GitHub](https://github.com/korus-labs/MIDIjourney) |
+| Pollinations Gallery 🆕 | A clean and simple gallery showcasing the community's AI-generated images using Pollinations' image feed interface. | @deng-xian-sheng | [Website](https://deng-xian-sheng.github.io/pollinations-img-page/) |
+| TurboReel | An open-source video generation system using AI. | @pedroriosa | [Website](https://turboreelgpt.tech/), [GitHub](https://github.com/turboreel/turboreel) |
+| Infinite Tales | A Choose Your Own Adventure RPG, dynamically narrated by AI. | JayJayBinks | [Website](https://infinite-tales-rpg.vercel.app/), [GitHub](https://github.com/JayJayBinks/infinite-tales-rpg) |
+| POLLIPAPER | A dynamic wallpaper app that uses Pollinations AI to create unique desktop backgrounds. | @intolerant0ne | [GitHub](https://github.com/Tolerable/POLLIPAPER) |
+| Own-AI | An AI text-to-image generator powered by Pollinations.ai. | Sujal Goswami | [Website](https://own-ai.pages.dev/), [GitHub](https://github.com/sujal-goswami/Own-AI) |
+| StorySight | An app to help children with learning disabilities by visualizing abstract concepts. | @abiral-manandhar | [GitHub](https://github.com/abiral-manandhar/storySight), [Devpost](https://devpost.com/software/storysight-013xdw) |
+| StoryWeaver | A tool that crafts personalized picture books for children based on themes and prompts. | Advaith Narayanan, Omeed Sabouri, Yufan Wang | [GitHub](https://github.com/AdvaithN1/StoryWeaver), [Devpost](https://devpost.com/software/storyweaver-013xdw) |
+| UR Imagine & Chat AI 🎨💬 | Free and limitless AI image generator with companion chat/roleplay system. | withthatway | [Image Gen](https://perchance.org/ur-imagine-ai/), [Chat](https://perchance.org/urchat-ai/) |
+| Websim | A web simulation tool that integrates Pollinations.ai for generating AI-driven content. | @thomash_pollinations | [Website](https://websim.ai/c/bXsmNE96e3op5rtUS) |
+| JCode Website Builder | A website generator using Pollinations text API. | @rtxpower | [Website](https://jcode-ai-website-bulder.netlify.app/ai-website-builder/generated-projects/categories) |
+| JustBuildThings | A collection of AI tools for image generation, character chat, and writing. | rasit | [Website](https://justbuildthings.com) |
 
 ### Tutorials
-1. [Tutorial](https://guiadehospedagem.com.br/pollinations-ai/): An in-depth Portuguese tutorial on using Pollinations AI. Created by Janderson de Sales.
-2. [Apple Shortcuts Guide](https://www.youtube.com/watch?v=-bS41VTzh_s): A step-by-step video guide on creating AI images using Apple Shortcuts and Pollinations. Created by RoutineHub. [Shortcut](https://routinehub.co/shortcut/19953/)
+1. [Artistic Styles Book](https://proyectodescartes.org/iCartesiLibri/materiales_didacticos/Libro_Estilos/index.html): 🆕 An interactive book showcasing over 90 different artistic styles generated using Pollinations.ai. Available in [HTML](https://proyectodescartes.org/iCartesiLibri/materiales_didacticos/Libro_Estilos/index.html) and [PDF](https://proyectodescartes.org/iCartesiLibri/PDF/Libro_Estilos.pdf) formats.
+2. [Proyecto Descartes](https://proyectodescartes.org/revista/Numeros/Revista_8_2024/index.html): 🆕 An educational initiative integrating Pollinations AI into interactive STEM learning resources, with a focus on mathematics and sciences. Created by Juan Gmo. Rivera.
+3. [Tutorial](https://guiadehospedagem.com.br/pollinations-ai/): An in-depth Portuguese tutorial on using Pollinations AI. Created by Janderson de Sales.
+4. [Apple Shortcuts Guide](https://www.youtube.com/watch?v=-bS41VTzh_s): A step-by-step video guide on creating AI images using Apple Shortcuts and Pollinations. Created by RoutineHub. [Shortcut](https://routinehub.co/shortcut/19953/)
 
 Have you created a project using Pollinations.AI? Email us at hello@pollinations.ai to get it listed here!
 
@@ -208,9 +243,19 @@ Pollinations.AI envisions a future where AI technology is:
 
 We're committed to developing AI technology that serves humanity while respecting ethical boundaries and promoting responsible innovation. Join us in shaping the future of AI.
 
-## 🤝 Community and Support
+## 🤝 Community and Development
 
-Join our vibrant community on Discord to share your creations, get support, and collaborate with fellow AI enthusiasts. 
+We believe in community-driven development. You can contribute to Pollinations.AI in several ways:
+
+1. **MentatBot Coding Assistant**: The easiest way to contribute! Just [create a GitHub issue](https://github.com/pollinations/pollinations/issues/new) describing the feature you'd like to see implemented. Our [MentatBot AI assistant](https://mentat.ai/) will analyze your request and implement it directly! No coding required - just describe what you want.
+
+2. **Feature Requests & Bug Reports**: Have an idea or found a bug? [Open an issue](https://github.com/pollinations/pollinations/issues/new) and let us know. Our team and the MentatBot assistant will review it.
+
+3. **Community Engagement**: Join our vibrant [Discord community](https://discord.gg/k9F7SyTgqn) to:
+   - Share your creations
+   - Get support and help others
+   - Collaborate with fellow AI enthusiasts
+   - Discuss feature ideas before creating issues
 
 For any questions or support, please visit our [Discord channel](https://discord.gg/k9F7SyTgqn) or create an issue on our [GitHub repository](https://github.com/pollinations/pollinations).
 
