@@ -88,40 +88,58 @@ class AIService {
   async analyzeEmail(threadMessages) {
     try {
       const userData = await userService.getUserData();
-      // const combinedContext = this.loadContextFiles();
 
       const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
 Analyze this email thread and determine if it needs a response.
 
 Classification Guidelines:
 1. Return FALSE if the email thread is clearly promotional or automated, such as:
-   - Marketing newsletters or promotional offers
-   - Automated notifications from services (e.g., "Your order has shipped")
-   - Social media notifications
-   - System-generated reports
-   - Bulk promotional emails
-   - "No-reply" automated messages
-   - Subscription confirmations or updates
+ - Marketing newsletters or promotional offers
+ - Automated notifications from services (e.g., "Your order has shipped")
+ - Social media notifications
+ - System-generated reports
+ - Bulk promotional emails
+ - "No-reply" automated messages
+ - Subscription confirmations or updates
 
 2. Return TRUE if ANY of these conditions are met:
-   - The email is from a real person (not automated)
-   - Contains a direct question or request to me
-   - Requires your input, decision, or acknowledgment
-   - Is part of an ongoing conversation
-   - Contains important information that needs confirmation
-   - Shows urgency or importance and mentions deadlines or time-sensitive matters
+ - The email is from a real person (not automated)
+ - Contains a direct question or request to me
+ - Requires your input, decision, or acknowledgment
+ - Is part of an ongoing conversation
+ - Contains important information that needs confirmation
+ - Shows urgency or importance and mentions deadlines or time-sensitive matters
 
-RESPONSE FORMAT:
-Return ONLY the word TRUE or FALSE`;
+Return your analysis in the following JSON format:
+{
+  "respond": true/false,
+  "reason": "Brief explanation of why this email needs/doesn't need a response"
+}`;
 
-      const messages = [{ "role": "system", "content": systemMessage }, ...threadMessages];
+      const messages = [
+        { role: "system", content: systemMessage },
+        { role: "user", content: JSON.stringify(threadMessages, null, 2) }
+      ];
+
       const response = await this.callPollinationsAPI(messages);
-      const shouldReply = response.content.trim().toUpperCase() === 'TRUE';
-      console.log("shouldReply", shouldReply);
-      return shouldReply;
+      try {
+        const jsonResponse = JSON.parse(response.content);
+        logger.info("Email analysis result", { 
+          respond: jsonResponse.respond, 
+          reason: jsonResponse.reason,
+          threadId: threadMessages[0]?.id || 'unknown'
+        });
+        return jsonResponse;
+      } catch (error) {
+        logger.error("Failed to parse AI response as JSON", { error: error.message, response: response.content });
+        // Fallback to a structured response if parsing fails
+        return {
+          respond: false,
+          reason: "Error parsing AI response: " + error.message
+        };
+      }
     } catch (error) {
-      console.error("Error analyzing email:", error);
-      logger.error("Error analyzing email", { error: error.message });
+      logger.error("Error in analyzeEmail", { error: error.message });
       throw error;
     }
   }

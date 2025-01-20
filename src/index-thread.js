@@ -94,11 +94,13 @@ async function processEmails() {
         }
 
         if (content.needsReply) { 
-          const shouldReply = await aiService.analyzeEmail(openAIMessages);
-
+          const analysis = await aiService.analyzeEmail(openAIMessages);
           
           console.log('----------------------------------------');
-          if (shouldReply) {
+          console.log('Analysis:', analysis.reason);
+          console.log('----------------------------------------');
+          
+          if (analysis.respond) {
             allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
 
             // console.log('Needs reply!!!', openAIMessages);
