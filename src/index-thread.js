@@ -6,7 +6,7 @@ const fs = require("fs");
 const cleanEmailThread = require('./utils/cleanEmailThread');
 const tqdm = require("tqdm");
 
-const MUM_MESSAGE_HISTORY_TO_FETCH = 50;
+const MUM_MESSAGE_HISTORY_TO_FETCH = 500;
 
 // Move service requires inside functions to prevent early initialization
 let emailService, aiService;
@@ -82,6 +82,7 @@ async function processEmails() {
           console.log(`\nProcessing thread ${thread.threadId}...`);
           console.log(`Subject: ${content.subject} - From: ${content.messages[0].from}`);
           // Pass just the messages array to cleanEmailThread
+          console.log("messages before clean", content.messges)
           const cleanedMessages = cleanEmailThread(content.messages);
     
           // Create new thread object with cleaned messages
@@ -95,6 +96,15 @@ async function processEmails() {
           console.log('Cleaned messages:', cleanedMessages.length);
           console.log('----------------------------------------');
           let openAIMessages = [];
+          
+          // Add thread separator message
+          const participants = emailService.getAllThreadParticipants(cleanedMessages);
+          openAIMessages.push({
+            role: "user",
+            content: `# NEW EMAIL THREAD WITH ID ${thread.threadId}\n--------------------------------------\n\n**Subject**: ${content.subject}\n**Participants**: ${participants.map(participant => participant.name).join(', ')}\n\nThe previous conversation and the following conversation are separate threads. They have no connection to each other unless by chance.\n`
+          });
+
+          // Process thread messages
           for (const message of cleanedMessages) {
             const openAIMessage = {
               "role": message.senderIsMe ? "assistant" : "user",
@@ -118,9 +128,11 @@ async function processEmails() {
               console.log('Background information:', backgroundInfo);
               // process.exit(1);
               // console.log('Needs reply!!!', openAIMessages);
+              allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
+
               const reply = await aiService.respondToEmail([
                 ...allOpenAIMessages, 
-                { role: "function", "content": backgroundInfo, name: "getBackgroundInformation"  }
+                { role: "user", "content": backgroundInfo, name: "getBackgroundInformation"  }
               ]);
 
               console.log('Reply:', reply);
@@ -166,6 +178,7 @@ async function processEmails() {
       } catch (error) {
         console.error(`Error processing thread ${thread.threadId}:`, error);
         logger.error(`Error processing thread ${thread.threadId}`, { error: error.message });
+        throw error;
       }
     }
 
@@ -179,6 +192,7 @@ async function processEmails() {
   } catch (error) {
     console.error("Error processing emails:", error);
     logger.error("Error processing emails", { error: error.message });
+    throw error;
   }
 }
 

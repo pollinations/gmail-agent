@@ -4,6 +4,7 @@ const logger = require("../utils/logger");
 const contextService = require("./contextService");
 const fs = require("fs");
 const path = require("path");
+const apiLoggingService = require("./apiLoggingService");
 const currentDate = new Date().toISOString().split('T')[0];
 
 class AIService {
@@ -38,7 +39,35 @@ class AIService {
     }
   }
 
-  async callPollinationsAPI(messages, json=false, model = "claude-email") {
+  interleaveMessages(messages) {
+    const result = [];
+    let lastRole = null;
+    
+    for (const msg of messages) {
+      if (lastRole === msg.role) {
+        // Insert empty message of opposite role to ensure alternation
+        const emptyRole = msg.role === 'user' ? 'assistant' : 'user';
+        result.push({ role: emptyRole, content: '' });
+      }
+      result.push(msg);
+      lastRole = msg.role;
+    }
+    
+    // Ensure we end with a user message for deepseek-reasoner
+    if (lastRole === 'assistant') {
+      result.push({ role: 'user', content: '' });
+    }
+    
+    return result;
+  }
+
+  async callPollinationsAPI(messages, options = {}) {
+    const { 
+      json = false, 
+      model = "openaie",
+      temperature = 0.7
+    } = options;
+
     const maxRetries = 3;
     let retryCount = 0;
     this.currentSeed = 42; // Reset seed for new request
@@ -48,32 +77,37 @@ class AIService {
         console.log(`API call attempt ${retryCount + 1}/${maxRetries + 1} with seed ${this.currentSeed}`);
         console.log("calling pollinations api", messages.length, model, "last message", JSON.stringify(messages[messages.length - 1], null, 2).slice(0,300));
         
+        const requestBody = {
+          messages,
+          model,
+          temperature,
+          json,
+          jsonMode: json,
+          referrer: 'pollinations',
+          seed: this.currentSeed
+        };
+        
+        apiLoggingService.logAPIRequest(this.apiEndpoint, requestBody);
+
         const response = await fetch(this.apiEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Referer':'pollinations'
           },
-          body: JSON.stringify({
-            messages,
-            model,
-            temperature: 0.7,
-            json,
-            jsonMode: json,
-            referrer: 'pollinations',
-            seed: this.currentSeed
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
-          // log whole response body
           const errorText = await response.text();
           console.error("API call failed:", errorText);
           
+          apiLoggingService.logAPIError(errorText);
+          
           if (retryCount < maxRetries) {
-            const delay = Math.pow(2, retryCount) * 1000; // exponential backoff: 1s, 2s, 4s
+            const delay = Math.pow(2, retryCount) * 1000;
             console.log(`Retrying in ${delay/1000} seconds...`);
-            this.currentSeed++; // Increment seed for next retry
+            this.currentSeed++;
             await new Promise(resolve => setTimeout(resolve, delay));
             retryCount++;
             continue;
@@ -81,16 +115,15 @@ class AIService {
           throw new Error(`API call failed: ${response.statusText}`);
         }
 
-        // Add error handling for text response
         const text = await response.text();
         try {
-          // Try to parse as JSON first
           const data = JSON.parse(text);
           console.log("usage", data.usage);
           this.lastUsage = data.usage;
           
+          apiLoggingService.logAPIResponse(data);
+          
           const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
-          // console.log("received response", textResponse);
           return {role: "assistant", content: textResponse};
         } catch (e) {
           // If not JSON, return the raw text
@@ -122,7 +155,7 @@ class AIService {
     try {
       const userData = await userService.getUserData();
 
-      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
+      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName} and Pollinations.AI.
 Current Status (${new Date().toISOString()}):
 - Location: Berlin, Germany (CET)
 - Important: Currently focusing on fundraising initiatives with Pollinations
@@ -130,16 +163,16 @@ Current Status (${new Date().toISOString()}):
 Analyze this email thread and determine if it needs a response.
 
 Classification Guidelines:
-1. Return FALSE if the email thread is clearly promotional or automated, such as:
+1. Return \`respond:false\` if the email thread is clearly promotional or automated, such as:
  - Marketing newsletters or promotional offers
- - Automated notifications from services (e.g., "Your order has shipped")
+ - Automated notifications from services
  - Social media notifications
  - System-generated reports
  - Bulk promotional emails
  - "No-reply" automated messages
  - Subscription confirmations or updates
 
-2. Return TRUE if ANY of these conditions are met:
+2. Return \`respond:true\` if ANY of these conditions are met:
  - The email is from a real person (not automated)
  - Contains a direct question or request to me
  - Requires your input, decision, or acknowledgment
@@ -147,26 +180,29 @@ Classification Guidelines:
  - Contains important information that needs confirmation
  - Shows urgency or importance and mentions deadlines or time-sensitive matters
 
-Return your analysis in the following JSON format:
+IMPORTANT: Respond ONLY with the following pure JSON format, with no additional text before or after. No ticks:
 {
-  "respond": true/false,
-  "reason": "Brief explanation of why this email needs/doesn't need a response"
+"respond": true/false,
+"reason": "Brief explanation of why this email needs/doesn't need a response"
 }`;
 
       const messages = [
         { role: "system", content: systemMessage },
-       ...threadMessages
+       ...threadMessages,
+       { role: "user", content: systemMessage }
       ];
 
-      const response = await this.callPollinationsAPI(messages, true);
+      logger.info("Full messages array before API call:", messages );
+
+
+      const response = await this.callPollinationsAPI(messages, { 
+        json: true,
+        model: "openai"
+      });
       console.log("response", response.content);
       try {
-        const jsonResponse = JSON.parse(response.content);
-        // logger.info("Email analysis result", { 
-        //   respond: jsonResponse.respond, 
-        //   reason: jsonResponse.reason,
-        //   threadId: threadMessages[0]?.id || 'unknown'
-        // });
+        const jsonResponse = JSON.parse(response.content.trim());
+        return {respond:true, reason:"override"}
         return jsonResponse;
       } catch (error) {
         logger.error("Failed to parse AI response as JSON", { error: error.message, response: response.content });
@@ -182,13 +218,17 @@ Return your analysis in the following JSON format:
     }
   }
 
-  // 4. Be concise yet thorough
-
   async respondToEmail(threadMessages) {
     try {
       const userData = await userService.getUserData();
 
-      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName}.
+      const context = `
+## CONTEXT
+${this.loadContextFiles()}`;
+
+      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName} and Pollinations.AI.`;
+
+      const instructionsMessage=`
 Current Status (${new Date().toISOString()}):
 - Location: Berlin, Germany (CET)
 - Important: Currently focusing on fundraising initiatives with Pollinations
@@ -196,20 +236,21 @@ Current Status (${new Date().toISOString()}):
 Write a response to this email thread.
 
 Composition Guidelines:
-1. Write in the same language as the original email
-2. Match the formality level of the original email
-3. Structure the response with proper paragraphs (use \n\n between paragraphs)
-4. Respond in detail referencing information from the email thread and also background information that you know or was provided in the context.
-5. Address all points from the original email
-6. Maintain professional tone while being personable
-7. Format with proper spacing:
+1. Be concise and to the point - respect the recipient's time
+2. Write in the same language as the original email
+3. Match the formality level of the original email
+4. Structure the response with proper paragraphs (use \n\n between paragraphs)
+5. Respond in detail referencing information from the email thread and also background information that you know or was provided in the context.
+6. Address all points from the original email
+7. Maintain professional tone while being personable
+8. Format with proper spacing:
    - Use double line breaks between paragraphs
    - Separate greeting and signature with double line breaks
    - Keep paragraphs logically grouped
-8. Write in the first person.
-9. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
-10. You have access to up-to-date background information from an AI agent who has access to web search. Use it in your response. Show off with it!!!
-11. When you mention Discord, actually render the link.
+9. Write in the first person.
+10. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
+11. You have access to up-to-date background information from an AI agent who has access to web search. Use it in your response. Show off with it!!!
+12. When you mention Discord, actually render the link.
 - PLEASE RESPOND TO MESSAGES FROM BOARDY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
 
 
@@ -230,36 +271,32 @@ CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOT
 - PLEASE RESPOND TO MESSAGES FROM BOARY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
 ----
 
-## CONTEXT
-${this.loadContextFiles()}
-
 RESPONSE FORMAT:
-Write a well-structured email response. Do not include any meta information or labels, just the response text.
+Write a well-structured email response in plain text format. Do not use any markdown or special formatting. Links should be included as plain text URLs, not markdown links. Do not include any meta information or labels, just the response text.
 Don't include to: from: subject: date: etc. Just the email body.
 
 ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.signature}` : "DO NOT add any signature"}`;
 
-      const messages = [{ role: "system", content: systemMessage }, ...threadMessages];
-      const response = await this.callPollinationsAPI(messages);
+      const model = 'deepseek-reasoner';
+      let messages = [
+        { role: model === 'deepseek-reasoner' ? "user" : "system", content: systemMessage }, 
+        {role: "user", content: context}, 
+        ...threadMessages, 
+        { role: "user", content: instructionsMessage }
+      ];
+
+      // Interleave messages for deepseek-reasoner model
+      if (model === 'deepseek-reasoner') {
+        messages = this.interleaveMessages(messages);
+      }
+
+      const response = await this.callPollinationsAPI(messages, {model });
       return response.content.trim();
     } catch (error) {
       console.error("Error composing email response:", error);
       logger.error("Error composing email response", { error: error.message });
       throw error;
     }
-  }
-
-  async generateForcedResponse(threadMessages) {
-    return this.respondToEmail(threadMessages);
-  }
-
-  async refineResponse(threadMessages, userModification) {
-    // Add the user modification as the last message in the thread
-    const messagesWithModification = [
-      ...threadMessages,
-      { role: "user", content: `Please revise the previous response. ${userModification}` }
-    ];
-    return this.respondToEmail(messagesWithModification);
   }
 
   async searchBackgroundInformation(thread) {
@@ -271,7 +308,7 @@ ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.s
       const messages = [
         {
           role: "system",
-          content: "You are an assistant tasked with searching for background knowledge about the other participants or topics discussed in this email thread (not about Pollinations, Thomas Haferlach, or email addresses containing 'thomash'). Format your response in detailed bullet points under these categories:\n\n• PERSON\n- Full name and role\n- Organization and position\n- Relevant background and expertise\n- Any notable achievements or projects mentioned\n\n• CONTEXT\n- Their specific questions or requests\n- Technical or domain-specific context\n- Previous interactions or relationships\n- Any deadlines or time-sensitive elements\n\n• KEY POINTS\n- Main interests or concerns\n- Potential collaboration areas\n- Any specific requirements or preferences\n\nProvide thorough details in each bullet point while staying relevant. Skip categories if no information is available. Ignore information about Pollinations as the email agent already has this context."
+          content: "You are an assistant tasked with finding relevant background information about people, topics, and technical issues in this email thread. Focus on what's most important for crafting a good response. Examples of useful information:\n\n- Person's role and organization\n- Previous interactions or relationships\n- Relevant projects or expertise\n- Technical issues and their common solutions\n- Latest developments or best practices in discussed topics\n- Market trends or industry context if relevant\n- Specific requests or time-sensitive elements\n\nProvide only the most relevant details in 2-3 bullet points. Adapt your research to what's needed - whether it's understanding a person's background, troubleshooting a technical issue, or providing informed context about a topic under discussion."
         },
         {
           role: "user",
@@ -281,51 +318,13 @@ ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.s
       ];
 
       const response = await this.callPollinationsAPI(messages, false, "searchgpt");
-      return response.content;
+      return `# Background Information\n\n${response.content}`; 
     } catch (error) {
       logger.error("Error in searchBackgroundInformation", { error: error.message });
       throw error;
     }
   }
 
-  parseAIResponse(response) {
-    try {
-      const lines = response.split("\n").filter((line) => line.trim() !== "");
-      let action = "";
-      let reason = "";
-
-      for (const line of lines) {
-        if (line.startsWith("Action:")) {
-          action = line.substring("Action:".length).trim();
-        } else if (line.startsWith("Reason:")) {
-          reason = line.substring("Reason:".length).trim();
-        }
-      }
-
-      // Validate and handle missing draft response
-      if (!action || !reason) {
-        throw new Error("Invalid AI response format - missing action or reason");
-      }
-
-      action = action.toUpperCase();
-
-      return {
-        action,
-        reason,
-      };
-    } catch (error) {
-      console.error("Error parsing AI response:", error, response);
-      logger.error("Error parsing AI response:", {
-        error: error.message,
-        rawResponse: response
-      });
-      // Return a default response
-      return {
-        action: "RESPOND",
-        reason: "Error parsing AI response",
-      };
-    }
-  }
 }
 
 module.exports = new AIService();

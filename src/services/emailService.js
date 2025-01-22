@@ -462,79 +462,6 @@ class EmailService {
     };
   }
 
-  async sendResponse(emailId, response) {
-    try {
-      const email = await this.gmail.users.messages.get({
-        userId: "me",
-        id: emailId,
-      });
-
-      const headers = email.data.payload.headers;
-      const from = headers.find((h) => h.name === "From")?.value;
-      const to = headers.find((h) => h.name === "To")?.value;
-      const cc = headers.find((h) => h.name === "Cc")?.value;
-      const subject = headers.find((h) => h.name === "Subject")?.value;
-      const references = headers.find((h) => h.name === "Message-ID")?.value;
-
-      // Get deduplicated recipients
-      const recipients = this.getUniqueRecipients(from, to, cc);
-
-      // Ensure response has proper line breaks
-      const formattedResponse = response
-        .replace(/\r\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-
-      const message = [
-        "From: me",
-        `To: ${recipients.to}`, // Use all recipients from getUniqueRecipients
-        ...(recipients.cc ? [`Cc: ${recipients.cc}`] : []), // Only add Cc if there are CC recipients
-        `Subject: Re: ${subject}`,
-        `References: ${references}`,
-        "Content-Type: text/plain; charset=utf-8",
-        "MIME-Version: 1.0",
-        "",
-        formattedResponse,
-      ].join("\n");
-
-      const encodedMessage = Buffer.from(message)
-        .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/, "");
-
-      await this.gmail.users.messages.send({
-        userId: "me",
-        requestBody: {
-          raw: encodedMessage,
-          threadId: email.data.threadId,
-        },
-      });
-
-      // Mark original email as read and processed
-      await this.gmail.users.messages.modify({
-        userId: "me",
-        id: emailId,
-        requestBody: {
-          removeLabelIds: ["UNREAD"],
-        },
-      });
-
-      this.processedEmails.add(emailId);
-      this.currentEmailBatch = this.currentEmailBatch.filter(
-        (email) => email.id !== emailId
-      );
-
-      logger.info(`Successfully sent response to email ${emailId} and marked as processed`);
-      return true;
-    } catch (error) {
-      console.error(`Failed to send response to email ${emailId}:`, error);
-      logger.error(`Failed to send response to email ${emailId}`, {
-        error: error.message,
-      });
-      throw error;
-    }
-  }
 
   // Method to mark an email as processed without archiving
   markAsProcessed(emailId) {
@@ -554,47 +481,6 @@ class EmailService {
   getEmailSignature(email) {
     const tokens = encode(`${email.subject} ${email.from}`);
     return tokens.slice(0, 100).join(","); // Create a simple signature from first 100 tokens
-  }
-
-  async fetchEmailsSince(sinceTime) {
-    try {
-      logger.info(`Fetching emails since ${sinceTime}`);
-
-      const response = await this.gmail.users.messages.list({
-        userId: "me",
-        q: "category:primary",
-        maxResults: 500,
-      });
-
-      if (!response.data.messages) {
-        return [];
-      }
-
-      const emails = await Promise.all(
-        response.data.messages.map(async (message) => {
-          const email = await this.gmail.users.messages.get({
-            userId: "me",
-            id: message.id,
-          });
-          return this.parseEmail(email.data);
-        })
-      );
-
-      // Filter emails based on internal date
-      const filteredEmails = emails.filter((email) => {
-        const emailDate = new Date(parseInt(email.internalDate));
-        return emailDate > sinceTime;
-      });
-
-      logger.info(`Found ${filteredEmails.length} Primary category emails since ${sinceTime}`);
-      return filteredEmails;
-    } catch (error) {
-      logger.error("Failed to fetch emails since last summary", {
-        error: error.message,
-        sinceTime: sinceTime.toISOString(),
-      });
-      throw error;
-    }
   }
 
   async markAsRead(emailId) {
@@ -628,7 +514,14 @@ class EmailService {
 
   async createDraft(threadId, message) {
     try {
-      // First fetch the thread data - we need this for participants regardless of message type
+      // Validate required fields
+      const requiredFields = ['to', 'subject', 'body'];
+      const missingFields = requiredFields.filter(field => !message[field]);
+      if (missingFields.length > 0) {
+        throw new Error(`Missing required fields for draft: ${missingFields.join(', ')}`);
+      }
+
+      // First fetch the thread data to get references if not provided
       const thread = await this.gmail.users.threads.get({
         userId: 'me',
         id: threadId
@@ -636,33 +529,18 @@ class EmailService {
       
       const lastMessage = thread.data.messages[thread.data.messages.length - 1];
       const headers = lastMessage.payload.headers;
-      const subject = headers.find(h => h.name === 'Subject')?.value;
-      const references = headers.find(h => h.name === 'Message-ID')?.value;
-
-      // Get all participants from the entire thread
-      const recipients = this.getAllThreadParticipants(thread.data.messages);
-
-      // If message is a string, create structured message object
-      if (typeof message === 'string') {
-        message = {
-          subject,
-          messageId: references,
-          body: message
-        };
-      }
-
-      // Always use the thread participants for recipients
-      message = {
-        ...message,
-        to: recipients.to,
-        cc: recipients.cc
-      };
+      
+      // Use provided messageId/references or get from thread
+      const messageId = message.messageId || headers.find(h => h.name === 'Message-ID')?.value;
+      const references = message.references || messageId;
 
       // Ensure message body has proper line breaks
       const formattedBody = message.body
         .replace(/\r\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+
+      console.log("Draft message", message);
 
       const draft = await this.gmail.users.drafts.create({
         userId: 'me',
@@ -674,8 +552,8 @@ class EmailService {
               `To: ${message.to}\n` +
               (message.cc ? `Cc: ${message.cc}\n` : '') +
               `Subject: Re: ${message.subject}\n` +
-              `In-Reply-To: ${message.messageId}\n` +
-              `References: ${message.references ? message.references + ' ' : ''}${message.messageId}\n` +
+              `In-Reply-To: ${messageId}\n` +
+              `References: ${references}\n` +
               `Content-Type: text/plain; charset=utf-8\n\n` +
               `${formattedBody}`
             ).toString('base64')
@@ -987,10 +865,10 @@ class EmailService {
     const ccSet = new Set();
 
     messages.forEach(message => {
-      const headers = message.payload.headers;
-      const from = headers.find(h => h.name === 'From')?.value;
-      const to = headers.find(h => h.name === 'To')?.value;
-      const cc = headers.find(h => h.name === 'Cc')?.value;
+      // Handle cleaned message format which has from/to directly
+      const from = message.from;
+      const to = message.to;
+      const cc = message.cc;
 
       // Add sender to To if it's not me
       if (from) {
@@ -1000,41 +878,30 @@ class EmailService {
         }
       }
 
-      // Add To recipients if they're not me
+      // Add recipients
       if (to) {
-        to.split(',').forEach(addr => {
-          const email = this.extractEmail(addr);
-          if (email && email !== this.userEmail) {
+        const toEmails = to.split(',').map(addr => this.extractEmail(addr.trim()));
+        toEmails.forEach(email => {
+          if (email !== this.userEmail) {
             toSet.add(email);
           }
         });
       }
 
-      // Add CC recipients if they're not me
+      // Add CC recipients
       if (cc) {
-        cc.split(',').forEach(addr => {
-          const email = this.extractEmail(addr);
-          if (email && email !== this.userEmail && !toSet.has(email)) {
-            ccSet.add(addr.trim());
+        const ccEmails = cc.split(',').map(addr => this.extractEmail(addr.trim()));
+        ccEmails.forEach(email => {
+          if (email !== this.userEmail) {
+            ccSet.add(email);
           }
         });
       }
     });
 
-    // Add pollinations.ai to CC if not already in To
-    if (!toSet.has("hello@pollinations.ai")) {
-      ccSet.add("hello@pollinations.ai");
-    }
-
-    logger.info('Thread participants:', { 
-      to: Array.from(toSet), 
-      cc: Array.from(ccSet)
-    });
-
-    return {
-      to: Array.from(toSet).join(", "),
-      cc: Array.from(ccSet).join(", ")
-    };
+    // Combine all unique participants
+    const allParticipants = [...toSet, ...ccSet];
+    return allParticipants;
   }
 }
 
