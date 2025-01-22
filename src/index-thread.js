@@ -6,7 +6,7 @@ const fs = require("fs");
 const cleanEmailThread = require('./utils/cleanEmailThread');
 const tqdm = require("tqdm");
 
-const MUM_MESSAGE_HISTORY_TO_FETCH = 500;
+const MUM_MESSAGE_HISTORY_TO_FETCH = 50;
 
 // Move service requires inside functions to prevent early initialization
 let emailService, aiService;

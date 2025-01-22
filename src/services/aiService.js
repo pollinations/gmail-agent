@@ -7,155 +7,152 @@ const path = require("path");
 const apiLoggingService = require("./apiLoggingService");
 const currentDate = new Date().toISOString().split('T')[0];
 
-class AIService {
-  constructor() {
-    // this.apiEndpoint = "https://text.pollinations.ai/openai";
-    this.apiEndpoint = "http://localhost:16385/openai";
-    this.currentSeed = 42; // Initialize seed
-  }
+// Constants and module state
+const apiEndpoint = "http://localhost:16385/openai";
+let currentSeed = 42;
+let contextCache = null;
+let lastUsage = null;
 
-  loadContextFiles() {
+function loadContextFiles() {
+  try {
+    if (contextCache) {
+      return contextCache;
+    }
+
+    const contextDir = path.join(process.cwd(), "context");
+    const files = fs.readdirSync(contextDir).filter(file => file.endsWith('.md'));
+    
+    const combinedContext = files.map(file => {
+      const content = fs.readFileSync(path.join(contextDir, file), 'utf8');
+      return `# ${file}\n\n${content}\n\n---\n\n`;
+    }).join('');
+
+    contextCache = combinedContext;
+    return combinedContext;
+  } catch (error) {
+    console.error("Failed to load context files:", error);
+    logger.error("Failed to load context files", { error: error.message });
+    return "";
+  }
+}
+
+function interleaveMessages(messages) {
+  const result = [];
+  let lastRole = null;
+  
+  for (const msg of messages) {
+    if (lastRole === msg.role) {
+      // Insert empty message of opposite role to ensure alternation
+      const emptyRole = msg.role === 'user' ? 'assistant' : 'user';
+      result.push({ role: emptyRole, content: '' });
+    }
+    result.push(msg);
+    lastRole = msg.role;
+  }
+  
+  // Ensure we end with a user message for deepseek-reasoner
+  if (lastRole === 'assistant') {
+    result.push({ role: 'user', content: '' });
+  }
+  
+  return result;
+}
+
+async function callPollinationsAPI(messages, options = {}) {
+  const { 
+    json = false, 
+    model = "openaie",
+    temperature = 0.7
+  } = options;
+
+  const maxRetries = 3;
+  let retryCount = 0;
+  currentSeed = 42; // Reset seed for new request
+
+  while (retryCount <= maxRetries) {
     try {
-      if (this.contextCache) {
-        return this.contextCache;
-      }
-
-      const contextDir = path.join(process.cwd(), "context");
-      const files = fs.readdirSync(contextDir).filter(file => file.endsWith('.md'));
+      console.log(`API call attempt ${retryCount + 1}/${maxRetries + 1} with seed ${currentSeed}`);
+      console.log("calling pollinations api", messages.length, model, "last message", JSON.stringify(messages[messages.length - 1], null, 2).slice(0,300));
       
-      const combinedContext = files.map(file => {
-        const content = fs.readFileSync(path.join(contextDir, file), 'utf8');
-        return `# ${file}\n\n${content}\n\n---\n\n`;
-      }).join('');
+      const requestBody = {
+        messages,
+        model,
+        temperature,
+        json,
+        jsonMode: json,
+        referrer: 'pollinations',
+        seed: currentSeed
+      };
+      
+      apiLoggingService.logAPIRequest(apiEndpoint, requestBody);
 
-      // console.log("context", combinedContext);
+      const response = await fetch(apiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Referer':'pollinations'
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-      this.contextCache = combinedContext;
-      return combinedContext;
-    } catch (error) {
-      console.error("Failed to load context files:", error);
-      logger.error("Failed to load context files", { error: error.message });
-      return "";
-    }
-  }
-
-  interleaveMessages(messages) {
-    const result = [];
-    let lastRole = null;
-    
-    for (const msg of messages) {
-      if (lastRole === msg.role) {
-        // Insert empty message of opposite role to ensure alternation
-        const emptyRole = msg.role === 'user' ? 'assistant' : 'user';
-        result.push({ role: emptyRole, content: '' });
-      }
-      result.push(msg);
-      lastRole = msg.role;
-    }
-    
-    // Ensure we end with a user message for deepseek-reasoner
-    if (lastRole === 'assistant') {
-      result.push({ role: 'user', content: '' });
-    }
-    
-    return result;
-  }
-
-  async callPollinationsAPI(messages, options = {}) {
-    const { 
-      json = false, 
-      model = "openaie",
-      temperature = 0.7
-    } = options;
-
-    const maxRetries = 3;
-    let retryCount = 0;
-    this.currentSeed = 42; // Reset seed for new request
-
-    while (retryCount <= maxRetries) {
-      try {
-        console.log(`API call attempt ${retryCount + 1}/${maxRetries + 1} with seed ${this.currentSeed}`);
-        console.log("calling pollinations api", messages.length, model, "last message", JSON.stringify(messages[messages.length - 1], null, 2).slice(0,300));
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API call failed:", errorText);
         
-        const requestBody = {
-          messages,
-          model,
-          temperature,
-          json,
-          jsonMode: json,
-          referrer: 'pollinations',
-          seed: this.currentSeed
-        };
+        apiLoggingService.logAPIError(errorText);
         
-        apiLoggingService.logAPIRequest(this.apiEndpoint, requestBody);
-
-        const response = await fetch(this.apiEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Referer':'pollinations'
-          },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("API call failed:", errorText);
-          
-          apiLoggingService.logAPIError(errorText);
-          
-          if (retryCount < maxRetries) {
-            const delay = Math.pow(2, retryCount) * 1000;
-            console.log(`Retrying in ${delay/1000} seconds...`);
-            this.currentSeed++;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            retryCount++;
-            continue;
-          }
-          throw new Error(`API call failed: ${response.statusText}`);
-        }
-
-        const text = await response.text();
-        try {
-          const data = JSON.parse(text);
-          console.log("usage", data.usage);
-          this.lastUsage = data.usage;
-          
-          apiLoggingService.logAPIResponse(data);
-          
-          const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
-          return {role: "assistant", content: textResponse};
-        } catch (e) {
-          // If not JSON, return the raw text
-          return {role: "assistant", content: text.trim()} ;
-        }
-
-      } catch (error) {
         if (retryCount < maxRetries) {
-          console.error(`Attempt ${retryCount + 1} failed:`, error);
           const delay = Math.pow(2, retryCount) * 1000;
           console.log(`Retrying in ${delay/1000} seconds...`);
-          this.currentSeed++; // Increment seed for next retry
+          currentSeed++;
           await new Promise(resolve => setTimeout(resolve, delay));
           retryCount++;
           continue;
         }
-        
-        console.error("Error calling Pollinations API (all retries exhausted):", error);
-        logger.error("Error calling Pollinations API", { 
-          error: error.message,
-          endpoint: this.apiEndpoint 
-        });
-        throw error;
+        throw new Error(`API call failed: ${response.statusText}`);
       }
+
+      const text = await response.text();
+      try {
+        const data = JSON.parse(text);
+        console.log("usage", data.usage);
+        lastUsage = data.usage;
+        
+        apiLoggingService.logAPIResponse(data);
+        
+        const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
+        return {role: "assistant", content: textResponse};
+      } catch (e) {
+        // If not JSON, return the raw text
+        return {role: "assistant", content: text.trim()} ;
+      }
+
+    } catch (error) {
+      if (retryCount < maxRetries) {
+        console.error(`Attempt ${retryCount + 1} failed:`, error);
+        const delay = Math.pow(2, retryCount) * 1000;
+        console.log(`Retrying in ${delay/1000} seconds...`);
+        currentSeed++; // Increment seed for next retry
+        await new Promise(resolve => setTimeout(resolve, delay));
+        retryCount++;
+        continue;
+      }
+      
+      console.error("Error calling Pollinations API (all retries exhausted):", error);
+      logger.error("Error calling Pollinations API", { 
+        error: error.message,
+        endpoint: apiEndpoint 
+      });
+      throw error;
     }
   }
+}
 
-  async analyzeEmail(threadMessages) {
-    try {
-      const userData = await userService.getUserData();
+async function analyzeEmail(threadMessages) {
+  try {
+    const userData = await userService.getUserData();
 
-      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName} and Pollinations.AI.
+    const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName} and Pollinations.AI.
 Current Status (${new Date().toISOString()}):
 - Location: Berlin, Germany (CET)
 - Important: Currently focusing on fundraising initiatives with Pollinations
@@ -186,49 +183,48 @@ IMPORTANT: Respond ONLY with the following pure JSON format, with no additional 
 "reason": "Brief explanation of why this email needs/doesn't need a response"
 }`;
 
-      const messages = [
-        { role: "system", content: systemMessage },
-       ...threadMessages,
-       { role: "user", content: systemMessage }
-      ];
+    const messages = [
+      { role: "system", content: systemMessage },
+      ...threadMessages,
+      { role: "user", content: systemMessage }
+    ];
 
-      logger.info("Full messages array before API call:", messages );
+    logger.info("Full messages array before API call:", messages );
 
-
-      const response = await this.callPollinationsAPI(messages, { 
-        json: true,
-        model: "openai"
-      });
-      console.log("response", response.content);
-      try {
-        const jsonResponse = JSON.parse(response.content.trim());
-        return {respond:true, reason:"override"}
-        return jsonResponse;
-      } catch (error) {
-        logger.error("Failed to parse AI response as JSON", { error: error.message, response: response.content });
-        // Fallback to a structured response if parsing fails
-        return {
-          respond: false,
-          reason: "Error parsing AI response: " + error.message
-        };
-      }
-    } catch (error) {
-      logger.error("Error in analyzeEmail", { error: error.message });
-      throw error;
-    }
-  }
-
-  async respondToEmail(threadMessages) {
+    const response = await callPollinationsAPI(messages, { 
+      json: true,
+      model: "openai"
+    });
+    console.log("response", response.content);
     try {
-      const userData = await userService.getUserData();
+      const jsonResponse = JSON.parse(response.content.trim());
+      return {respond:true, reason:"override"}
+      return jsonResponse;
+    } catch (error) {
+      logger.error("Failed to parse AI response as JSON", { error: error.message, response: response.content });
+      // Fallback to a structured response if parsing fails
+      return {
+        respond: false,
+        reason: "Error parsing AI response: " + error.message
+      };
+    }
+  } catch (error) {
+    logger.error("Error in analyzeEmail", { error: error.message });
+    throw error;
+  }
+}
 
-      const context = `
+async function respondToEmail(threadMessages) {
+  try {
+    const userData = await userService.getUserData();
+
+    const context = `
 ## CONTEXT
-${this.loadContextFiles()}`;
+${loadContextFiles()}`;
 
-      const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName} and Pollinations.AI.`;
+    const systemMessage = `You are an intelligent email assistant for ${userData.firstName} ${userData.lastName} and Pollinations.AI.`;
 
-      const instructionsMessage=`
+    const instructionsMessage=`
 Current Status (${new Date().toISOString()}):
 - Location: Berlin, Germany (CET)
 - Important: Currently focusing on fundraising initiatives with Pollinations
@@ -277,54 +273,61 @@ Don't include to: from: subject: date: etc. Just the email body.
 
 ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.signature}` : "DO NOT add any signature"}`;
 
-      const model = 'deepseek-reasoner';
-      let messages = [
-        { role: model === 'deepseek-reasoner' ? "user" : "system", content: systemMessage }, 
-        {role: "user", content: context}, 
-        ...threadMessages, 
-        { role: "user", content: instructionsMessage }
-      ];
+    const model = 'deepseek-reasoner';
+    let messages = [
+      { role: model === 'deepseek-reasoner' ? "user" : "system", content: systemMessage }, 
+      {role: "user", content: context}, 
+      ...threadMessages, 
+      { role: "user", content: instructionsMessage }
+    ];
 
-      // Interleave messages for deepseek-reasoner model
-      if (model === 'deepseek-reasoner') {
-        messages = this.interleaveMessages(messages);
-      }
-
-      const response = await this.callPollinationsAPI(messages, {model });
-      return response.content.trim();
-    } catch (error) {
-      console.error("Error composing email response:", error);
-      logger.error("Error composing email response", { error: error.message });
-      throw error;
+    // Interleave messages for deepseek-reasoner model
+    if (model === 'deepseek-reasoner') {
+      messages = interleaveMessages(messages);
     }
+
+    const response = await callPollinationsAPI(messages, {model});
+    return response.content.trim();
+  } catch (error) {
+    console.error("Error composing email response:", error);
+    logger.error("Error composing email response", { error: error.message });
+    throw error;
   }
-
-  async searchBackgroundInformation(thread) {
-    try {
-      const threadContent = thread.messages.map(msg => 
-        `From: ${msg.from}\nTo: ${msg.to}\nSubject: ${msg.subject}\n${msg.body}`
-      ).join('\n---\n');
-
-      const messages = [
-        {
-          role: "system",
-          content: "You are an assistant tasked with finding relevant background information about people, topics, and technical issues in this email thread. Focus on what's most important for crafting a good response. Examples of useful information:\n\n- Person's role and organization\n- Previous interactions or relationships\n- Relevant projects or expertise\n- Technical issues and their common solutions\n- Latest developments or best practices in discussed topics\n- Market trends or industry context if relevant\n- Specific requests or time-sensitive elements\n\nProvide only the most relevant details in 2-3 bullet points. Adapt your research to what's needed - whether it's understanding a person's background, troubleshooting a technical issue, or providing informed context about a topic under discussion."
-        },
-        {
-          role: "user",
-          content: threadContent
-        },
-        { role: "user", content: "Search for information about the other participants or specific topics discussed and return it in detailed bullet points under the specified categories. Don't respond to the email - just provide the background information." }
-      ];
-
-      const response = await this.callPollinationsAPI(messages, false, "searchgpt");
-      return `# Background Information\n\n${response.content}`; 
-    } catch (error) {
-      logger.error("Error in searchBackgroundInformation", { error: error.message });
-      throw error;
-    }
-  }
-
 }
 
-module.exports = new AIService();
+async function searchBackgroundInformation(thread) {
+  try {
+    const threadContent = thread.messages.map(msg => 
+      `From: ${msg.from}\nTo: ${msg.to}\nSubject: ${msg.subject}\n${msg.body}`
+    ).join('\n---\n');
+
+    const messages = [
+      {
+        role: "system",
+        content: "You are an assistant tasked with finding relevant background information about people, topics, and technical issues in this email thread. Focus on what's most important for crafting a good response. Examples of useful information:\n\n- Person's role and organization\n- Previous interactions or relationships\n- Relevant projects or expertise\n- Technical issues and their common solutions\n- Latest developments or best practices in discussed topics\n- Market trends or industry context if relevant\n- Specific requests or time-sensitive elements\n\nProvide only the most relevant details in 2-3 bullet points. Adapt your research to what's needed - whether it's understanding a person's background, troubleshooting a technical issue, or providing informed context about a topic under discussion."
+      },
+      {
+        role: "user",
+        content: threadContent
+      },
+      { role: "user", content: "Search for information about the other participants or specific topics discussed and return it in detailed bullet points under the specified categories. Don't respond to the email - just provide the background information." }
+    ];
+
+    const response = await callPollinationsAPI(messages, false, "searchgpt");
+    return `# Background Information\n\n${response.content}`; 
+  } catch (error) {
+    logger.error("Error in searchBackgroundInformation", { error: error.message });
+    throw error;
+  }
+}
+
+// Export an object with the same interface as before
+module.exports = {
+  loadContextFiles,
+  interleaveMessages,
+  callPollinationsAPI,
+  analyzeEmail,
+  respondToEmail,
+  searchBackgroundInformation,
+  get lastUsage() { return lastUsage; }  
+};
