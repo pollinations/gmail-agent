@@ -8,10 +8,13 @@ const apiLoggingService = require("./apiLoggingService");
 const currentDate = new Date().toISOString().split('T')[0];
 
 // Constants and module state
-const apiEndpoint = "http://localhost:16385/openai";
+const apiEndpoint = "http://text.pollinations.ai/openai";
+// const apiEndpoint = "http://localhost:16385/openai"
 let currentSeed = 42;
 let contextCache = null;
 let lastUsage = null;
+
+const MODEL = "openai-reasoning";
 
 function loadContextFiles() {
   try {
@@ -37,33 +40,21 @@ function loadContextFiles() {
 }
 
 function interleaveMessages(messages) {
-  const result = [];
-  let lastRole = null;
-  
-  for (const msg of messages) {
-    if (lastRole === msg.role) {
-      // Insert empty message of opposite role to ensure alternation
-      const emptyRole = msg.role === 'user' ? 'assistant' : 'user';
-      result.push({ role: emptyRole, content: '' });
-    }
-    result.push(msg);
-    lastRole = msg.role;
-  }
-  
-  // Ensure we end with a user message for deepseek-reasoner
-  if (lastRole === 'assistant') {
-    result.push({ role: 'user', content: '' });
-  }
-  
-  return result;
+  const combinedContent = messages
+    .map(msg => `[${msg.role === 'user' ? 'received' : 'sent'}] ${msg.content}`)
+    .join('\n---\n');
+    
+  return [{ role: 'user', content: combinedContent }];
 }
 
 async function callPollinationsAPI(messages, options = {}) {
-  const { 
+  let { 
     json = false, 
     model = "openaie",
-    temperature = 0.7
+    // temperature = 0.7
   } = options;
+
+  json = false;
 
   const maxRetries = 3;
   let retryCount = 0;
@@ -77,7 +68,7 @@ async function callPollinationsAPI(messages, options = {}) {
       const requestBody = {
         messages,
         model,
-        temperature,
+        // temperature,
         json,
         jsonMode: json,
         referrer: 'pollinations',
@@ -120,8 +111,16 @@ async function callPollinationsAPI(messages, options = {}) {
         
         apiLoggingService.logAPIResponse(data);
         
-        const textResponse = data.choices?.[0]?.message?.content?.trim() || text;
-        return {role: "assistant", content: textResponse};
+        const message = data.choices?.[0]?.message;
+        const textResponse = message?.content?.trim() || text;
+        const response = { role: "assistant", content: textResponse };
+        
+        // Include reasoning_content if it exists
+        if (message?.reasoning_content) {
+          response.reasoning_content = message.reasoning_content;
+        }
+        
+        return response;
       } catch (e) {
         // If not JSON, return the raw text
         return {role: "assistant", content: text.trim()} ;
@@ -184,7 +183,7 @@ IMPORTANT: Respond ONLY with the following pure JSON format, with no additional 
 }`;
 
     const messages = [
-      { role: "system", content: systemMessage },
+      { role: "user", content: systemMessage },
       ...threadMessages,
       { role: "user", content: systemMessage }
     ];
@@ -193,12 +192,11 @@ IMPORTANT: Respond ONLY with the following pure JSON format, with no additional 
 
     const response = await callPollinationsAPI(messages, { 
       json: true,
-      model: "openai"
+      model: MODEL
     });
     console.log("response", response.content);
     try {
       const jsonResponse = JSON.parse(response.content.trim());
-      return {respond:true, reason:"override"}
       return jsonResponse;
     } catch (error) {
       logger.error("Failed to parse AI response as JSON", { error: error.message, response: response.content });
@@ -235,36 +233,54 @@ Composition Guidelines:
 1. Be concise and to the point - respect the recipient's time
 2. Write in the same language as the original email
 3. Match the formality level of the original email
-4. Structure the response with proper paragraphs (use \n\n between paragraphs)
-5. Respond in detail referencing information from the email thread and also background information that you know or was provided in the context.
-6. Address all points from the original email
-7. Maintain professional tone while being personable
-8. Format with proper spacing:
-   - Use double line breaks between paragraphs
-   - Separate greeting and signature with double line breaks
-   - Keep paragraphs logically grouped
-9. Write in the first person.
-10. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
-11. You have access to up-to-date background information from an AI agent who has access to web search. Use it in your response. Show off with it!!!
-12. When you mention Discord, actually render the link.
-- PLEASE RESPOND TO MESSAGES FROM BOARDY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
-
+4. Structure the response with clear, well-organized paragraphs
+5. Focus on high-value information - avoid filler words and unnecessary pleasantries
+6. Skip responding to obvious points or adding polite but empty phrases
+7. Use clear sentences and get straight to the point
+8. Address key points while maintaining brevity
+9. Maintain professional tone while being direct
+10. Format with proper spacing:
+    - Use double line breaks between paragraphs
+    - Separate greeting and signature with double line breaks
+    - Keep paragraphs logically grouped
+11. Write in the first person
+12. Avoid being too positive and marketing-like. Follow my emails style from the messages in the context
+13. Reference relevant background information when needed
+14. When you mention Discord, actually render the link
+15. PLEASE RESPOND TO MESSAGES FROM BOARDY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
 
 IMPORTANT:
 
-CURRENTLY RUNNING COMPLETELY NON-PROFIT! SO ANY INQUIRIES ABOUT LIKE PAID PROMOTIONS OR SPONSORSHIP SHOULD BE ANSWERED WITH "NO".
+CURRENTLY RUNNING COMPLETELY WITHOUT REVENUE! SO ANY INQUIRIES ABOUT LIKE PAID PROMOTIONS OR SPONSORSHIP SHOULD BE ANSWERED WITH "NO". WE ARE OPEN FOR INVESTMENT THOUGH AND PLAN TO OFFER AD-BASED MONETIZATION.
+
+## PARTNERSHIP GOALS
+- We are actively seeking strategic partnerships that align with our open-source mission
+- Prioritize opportunities for mutual collaboration with other open-source projects
+- Looking for partners who can provide infrastructure, computing resources, or AI model access
+- Open to exploring research partnerships with academic institutions
+- Interested in collaborations that can help scale our free services sustainably
+
+## PROJECT SUBMISSIONS
+IMPORTANT: When users mention projects built with Pollinations:
+1. Express enthusiasm about their creation
+2. Direct them to submit their project through our official submission form:
+   https://github.com/pollinations/pollinations/issues/new?template=project-submission.yml
+3. Emphasize that this helps us showcase and document community projects
+4. Mention that their submission will help inspire others in the community
 
 ## STATUS
 ----
 - WHENEVER POSSIBLE INVITE PEOPLE TO OUR DISCORD SERVER! https://discord.gg/k9F7SyTgqn
 - OUR API HAS NO AUTHENTICATION AND IS FREE!
-- DON'T ACCEPPT APPOINTMENTS
+- IF SOMEONE MENTIONS A PROJECT BUILT WITH POLLINATIONS, DIRECT THEM TO SUBMIT IT AT: https://github.com/pollinations/pollinations/issues/new?template=project-submission.yml
 ----
+- WE ARE AN OPEN SOURCE PROJECT COMMITTED TO DEMOCRATIZING AI ACCESS
 - WE OFFER FREE TEXT AND IMAGE GENERATION APIS.
 - EVERYTHING WORKING NORMALLY
 - ALL SERVICES UP AND RUNNING!
-- IMPRESS THE OTHER BY USING SOME BACKGROUND INFORMATION FROM THE CONTEXT
-- PLEASE RESPOND TO MESSAGES FROM BOARY. I FORGOT TO ADD ALL RECIPIENTS IN THE RESPONSE. NOW IT WILL WORK
+- IMPRESS THE OTHER BY USING VERY SPECIFIC BACKGROUND INFORMATION FROM THE CONTEXT
+- Consider my question carefully and think of the academic or professional expertise of someone that could best answer my question. You have the experience of someone with expert knowledge in that area. Be helpful and answer in detail while preferring to use information from reputable sources.
+- Mention only information that is present in the context or in the background information. When in doubt don't mention something. Rather be concise and factual.
 ----
 
 RESPONSE FORMAT:
@@ -273,9 +289,9 @@ Don't include to: from: subject: date: etc. Just the email body.
 
 ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.signature}` : "DO NOT add any signature"}`;
 
-    const model = 'deepseek-reasoner';
+    const model = MODEL;
     let messages = [
-      { role: model === 'deepseek-reasoner' ? "user" : "system", content: systemMessage }, 
+      { role: model === 'deepseek-reasoner' ? "user" : "user", content: systemMessage }, 
       {role: "user", content: context}, 
       ...threadMessages, 
       { role: "user", content: instructionsMessage }
@@ -287,7 +303,7 @@ ${userData.preferences.useSignature ? `\n\nInclude this signature:\n${userData.s
     }
 
     const response = await callPollinationsAPI(messages, {model});
-    return response.content.trim();
+    return response;
   } catch (error) {
     console.error("Error composing email response:", error);
     logger.error("Error composing email response", { error: error.message });
@@ -303,14 +319,14 @@ async function searchBackgroundInformation(thread) {
 
     const messages = [
       {
-        role: "system",
+        role: "user",
         content: "You are an assistant tasked with finding relevant background information about people, topics, and technical issues in this email thread. Focus on what's most important for crafting a good response. Examples of useful information:\n\n- Person's role and organization\n- Previous interactions or relationships\n- Relevant projects or expertise\n- Technical issues and their common solutions\n- Latest developments or best practices in discussed topics\n- Market trends or industry context if relevant\n- Specific requests or time-sensitive elements\n\nProvide only the most relevant details in 2-3 bullet points. Adapt your research to what's needed - whether it's understanding a person's background, troubleshooting a technical issue, or providing informed context about a topic under discussion."
       },
       {
         role: "user",
         content: threadContent
       },
-      { role: "user", content: "Search for information about the other participants or specific topics discussed and return it in detailed bullet points under the specified categories. Don't respond to the email - just provide the background information." }
+      { role: "user", content: "Search for information about the other participants or specific topics discussed and return it in detailed bullet points under the specified categories. Note that Elliot Fouchy is a project manager at Pollinations. Don't respond to the email - just provide the background information." }
     ];
 
     const response = await callPollinationsAPI(messages, false, "searchgpt");
