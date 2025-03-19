@@ -14,7 +14,7 @@ let currentSeed = 42;
 let contextCache = null;
 let lastUsage = null;
 
-const MODEL = "gemini-thinking";
+const MODEL = "gemini";
 
 function loadContextFiles() {
   try {
