@@ -14,7 +14,7 @@ let currentSeed = 42;
 let contextCache = null;
 let lastUsage = null;
 
-const MODEL = "gemini";
+const MODEL = "openai-reasoning";
 
 function loadContextFiles() {
   try {
@@ -281,6 +281,7 @@ IMPORTANT: When users mention projects built with Pollinations:
 - IMPRESS THE OTHER BY USING VERY SPECIFIC BACKGROUND INFORMATION FROM THE CONTEXT
 - Consider my question carefully and think of the academic or professional expertise of someone that could best answer my question. You have the experience of someone with expert knowledge in that area. Be helpful and answer in detail while preferring to use information from reputable sources.
 - Mention only information that is present in the context or in the background information. When in doubt don't mention something. Rather be concise and factual.
+- VISION CAPABILITIES ARE SUPPORTED BY SOME TEXT MODELS (OPENAI AND OTHERS) FOLLOWING THE OPENAI VISION API FORMAT. THIS IS DIFFERENT FROM OUR IMAGE GENERATION API. USERS CAN SEND IMAGES TO THE TEXT API USING THE OPENAI VISION API FORMAT WITH BASE64-ENCODED IMAGES IN THE MESSAGES ARRAY.
 ----
 
 RESPONSE FORMAT:
