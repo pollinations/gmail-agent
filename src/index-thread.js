@@ -6,7 +6,7 @@ const fs = require("fs");
 const cleanEmailThread = require('./utils/cleanEmailThread');
 const tqdm = require("tqdm");
 
-const MUM_MESSAGE_HISTORY_TO_FETCH = 50;
+const MUM_MESSAGE_HISTORY_TO_FETCH = 400;
 
 // Move service requires inside functions to prevent early initialization
 let emailService, aiService;
@@ -82,7 +82,7 @@ async function processEmails() {
           console.log(`\nProcessing thread ${thread.threadId}...`);
           console.log(`Subject: ${content.subject} - From: ${content.messages[0].from}`);
           // Pass just the messages array to cleanEmailThread
-          console.log("messages before clean", content.messges)
+          console.log("messages before clean", content.messages)
           const cleanedMessages = cleanEmailThread(content.messages);
     
           // Create new thread object with cleaned messages
@@ -99,9 +99,16 @@ async function processEmails() {
           
           // Add thread separator message
           const participants = emailService.getAllThreadParticipants(cleanedMessages);
+          
+          logger.info(`Processing thread`, {
+            threadId: thread.threadId,
+            subject: content.subject,
+            participants: participants.join(', ')
+          });
+
           openAIMessages.push({
             role: "user",
-            content: `# NEW EMAIL THREAD WITH ID ${thread.threadId}\n--------------------------------------\n\n**Subject**: ${content.subject}\n**Participants**: ${participants.map(participant => participant.name).join(', ')}\n\nThe previous conversation and the following conversation are separate threads. They have no connection to each other unless by chance.\n`
+            content: `# NEW EMAIL THREAD WITH ID ${thread.threadId}\n--------------------------------------\n\n**Subject**: ${content.subject}\n**Participants**: ${participants.join(', ')}\n\nThe previous conversation and the following conversation are separate threads. They have no connection to each other unless by chance.\n`
           });
 
           // Process thread messages
@@ -130,12 +137,12 @@ async function processEmails() {
               // console.log('Needs reply!!!', openAIMessages);
               allOpenAIMessages = [...allOpenAIMessages, ...openAIMessages];
 
-              const reply = await aiService.respondToEmail([
+              const responseMessage = await aiService.respondToEmail([
+                { role: "user", "content": backgroundInfo, name: "getBackgroundInformation"  },
                 ...allOpenAIMessages, 
-                { role: "user", "content": backgroundInfo, name: "getBackgroundInformation"  }
               ]);
 
-              console.log('Reply:', reply);
+              console.log('Reply:', responseMessage.content);
               
               // Check if prompt tokens exceed 80,000 and remove first 10% of messages if needed
               if (aiService.lastUsage.prompt_tokens > 80000) {
@@ -144,19 +151,39 @@ async function processEmails() {
                 console.log(`Removed ${messagesToRemove} messages due to high token count`);
               }
               
+              const reasoning_content = responseMessage.reasoning_content ? `\n\n##Reasoning:\n\n${responseMessage.reasoning_content}` : ""
               // Create a draft with the AI's response
               const lastMessage = cleanedMessages[cleanedMessages.length - 1];
+              
+              // Get all participants from the thread except ourselves
+              const threadParticipants = emailService.getAllThreadParticipants(cleanedMessages);
+              let recipients = lastMessage.from; // Always include the last sender
+              
+              // Add other participants except ourselves
+              const otherParticipants = threadParticipants
+                .filter(p => p !== lastMessage.from && !p.toLowerCase().includes(emailService.userEmail.toLowerCase()))
+                .join(', ');
+              
+              if (otherParticipants) {
+                recipients += ', ' + otherParticipants;
+              }
+              
+              logger.info(`Creating draft reply`, {
+                threadId: thread.threadId,
+                to: recipients
+              });
+              
               await emailService.createDraft(thread.threadId, {
-                to: lastMessage.from,
+                to: recipients,
                 subject: lastMessage.subject,
                 messageId: lastMessage.messageId,
                 references: lastMessage.references,
-                body: reply
+                body: `${responseMessage.content}${reasoning_content}\n\n${backgroundInfo}`
               });
 
               allOpenAIMessages.push({
                 "role": "assistant",
-                "content": reply
+                "content": responseMessage.content
               });
               
               console.log('----------------------------------------');

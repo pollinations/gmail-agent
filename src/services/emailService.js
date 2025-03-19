@@ -514,6 +514,11 @@ class EmailService {
 
   async createDraft(threadId, message) {
     try {
+      // Add default subject if missing
+      if (!message.subject) {
+        message.subject = "Re: Pollinations AI Discussion";
+      }
+
       // Validate required fields
       const requiredFields = ['to', 'subject', 'body'];
       const missingFields = requiredFields.filter(field => !message[field]);
@@ -521,26 +526,37 @@ class EmailService {
         throw new Error(`Missing required fields for draft: ${missingFields.join(', ')}`);
       }
 
-      // First fetch the thread data to get references if not provided
-      const thread = await this.gmail.users.threads.get({
-        userId: 'me',
-        id: threadId
-      });
-      
-      const lastMessage = thread.data.messages[thread.data.messages.length - 1];
-      const headers = lastMessage.payload.headers;
-      
-      // Use provided messageId/references or get from thread
-      const messageId = message.messageId || headers.find(h => h.name === 'Message-ID')?.value;
-      const references = message.references || messageId;
-
       // Ensure message body has proper line breaks
       const formattedBody = message.body
         .replace(/\r\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 
-      console.log("Draft message", message);
+      let messageId = message.messageId;
+      let references = message.references;
+
+      // Try to fetch thread data, but continue even if it fails
+      try {
+        const thread = await this.gmail.users.threads.get({
+          userId: 'me',
+          id: threadId
+        });
+        
+        const lastMessage = thread.data.messages[thread.data.messages.length - 1];
+        const headers = lastMessage.payload.headers;
+        
+        // Use thread data for messageId/references if not provided
+        messageId = messageId || headers.find(h => h.name === 'Message-ID')?.value;
+        references = references || messageId;
+      } catch (error) {
+        logger.warn(`Failed to fetch thread data for ${threadId}, continuing with draft creation`, { error: error.message });
+      }
+
+      logger.info("Creating draft message", {
+        to: message.to,
+        subject: message.subject,
+        threadId
+      });
 
       const draft = await this.gmail.users.drafts.create({
         userId: 'me',
@@ -548,26 +564,27 @@ class EmailService {
           message: {
             threadId,
             raw: Buffer.from(
-              `From: me\n` +
+              `From: ${this.userEmail}\n` +
               `To: ${message.to}\n` +
-              (message.cc ? `Cc: ${message.cc}\n` : '') +
-              `Subject: Re: ${message.subject}\n` +
-              `In-Reply-To: ${messageId}\n` +
-              `References: ${references}\n` +
-              `Content-Type: text/plain; charset=utf-8\n\n` +
-              `${formattedBody}`
+              `Subject: ${message.subject}\n` +
+              (messageId ? `Message-ID: ${messageId}\n` : '') +
+              (references ? `References: ${references}\n` : '') +
+              'Content-Type: text/plain; charset=utf-8\n' +
+              '\n' +
+              formattedBody
             ).toString('base64')
-              .replace(/\+/g, '-')
-              .replace(/\//g, '_')
-              .replace(/=+$/, '')
           }
         }
       });
-      
-      logger.info('Draft created successfully', { threadId });
+
       return draft.data;
     } catch (error) {
-      logger.error('Error creating draft', { error: error.message, threadId });
+      logger.error(`Failed to create draft for thread ${threadId}`, {
+        error: error.message,
+        threadId,
+        to: message.to,
+        subject: message.subject
+      });
       throw error;
     }
   }
@@ -861,47 +878,29 @@ class EmailService {
   }
 
   getAllThreadParticipants(messages) {
-    const toSet = new Set();
-    const ccSet = new Set();
+    const participants = new Set();
 
     messages.forEach(message => {
-      // Handle cleaned message format which has from/to directly
-      const from = message.from;
-      const to = message.to;
-      const cc = message.cc;
-
-      // Add sender to To if it's not me
-      if (from) {
-        const fromEmail = this.extractEmail(from);
-        if (fromEmail !== this.userEmail) {
-          toSet.add(fromEmail);
+      const addParticipant = (address) => {
+        if (!address) return;
+        const email = this.extractEmail(address);
+        if (email && email !== this.userEmail) {
+          participants.add(address.trim()); // Keep the full address including name if present
         }
-      }
+      };
 
-      // Add recipients
-      if (to) {
-        const toEmails = to.split(',').map(addr => this.extractEmail(addr.trim()));
-        toEmails.forEach(email => {
-          if (email !== this.userEmail) {
-            toSet.add(email);
-          }
-        });
-      }
-
-      // Add CC recipients
-      if (cc) {
-        const ccEmails = cc.split(',').map(addr => this.extractEmail(addr.trim()));
-        ccEmails.forEach(email => {
-          if (email !== this.userEmail) {
-            ccSet.add(email);
-          }
-        });
-      }
+      // Add all participants from from/to/cc/reply-to fields
+      addParticipant(message.from);
+      if (message.to) message.to.split(',').forEach(addParticipant);
+      if (message.cc) message.cc.split(',').forEach(addParticipant);
+      
+      // Add Reply-To if present in headers
+      const replyTo = message.headers?.find(h => h.name.toLowerCase() === 'reply-to')?.value;
+      if (replyTo) replyTo.split(',').forEach(addParticipant);
     });
 
-    // Combine all unique participants
-    const allParticipants = [...toSet, ...ccSet];
-    return allParticipants;
+    logger.info(`Found ${participants.size} unique participants`);
+    return Array.from(participants);
   }
 }
 
