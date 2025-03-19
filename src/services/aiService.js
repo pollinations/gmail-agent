@@ -14,7 +14,7 @@ let currentSeed = 42;
 let contextCache = null;
 let lastUsage = null;
 
-const MODEL = "openai-reasoning";
+const MODEL = "gemini-thinking";
 
 function loadContextFiles() {
   try {
